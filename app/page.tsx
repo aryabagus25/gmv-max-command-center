@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import dashboardData from "./dashboard-data.json";
 
 type Tab = "overview" | "creative" | "live";
-type SortKey = "cost" | "revenue" | "roi" | "orders";
+type SortKey = "videoId" | "account" | "campaign" | "cost" | "revenue" | "roi" | "orders" | "cpo" | "ctr";
 type LiveSortKey = "launchedAt" | "cost" | "revenue" | "roi" | "orders" | "views";
 type LiveView = "leader" | "detail";
 type CreativeRow = (typeof dashboardData.creative.creatives)[number] & { brand?: string; importId?: string };
@@ -74,6 +74,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [onlySpend, setOnlySpend] = useState(true);
   const [sort, setSort] = useState<SortKey>("cost");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [creativeFrom, setCreativeFrom] = useState("");
+  const [creativeTo, setCreativeTo] = useState("");
   const [selectedCreative, setSelectedCreative] = useState<CreativeRow | null>(null);
   const [liveFrom, setLiveFrom] = useState(LIVE_MIN);
   const [liveTo, setLiveTo] = useState(LIVE_MAX);
@@ -133,10 +136,12 @@ export default function Home() {
   const brandLive = useMemo(()=>liveSource.filter(x=>selectedBrand==="all"||(x.brand||"Brand Februari")===selectedBrand),[liveSource,selectedBrand]);
   const creativeRows = useMemo(() => brandCreative
     .filter((row) => campaign === "all" || row.campaign === campaign)
+    .filter((row) => !creativeFrom || (row.postedAt !== "-" && row.postedAt.slice(0,10) >= creativeFrom))
+    .filter((row) => !creativeTo || (row.postedAt !== "-" && row.postedAt.slice(0,10) <= creativeTo))
     .filter((row) => !onlySpend || row.cost > 0)
     .filter((row) => `${row.title} ${row.account} ${row.videoId}`.toLowerCase().includes(query.toLowerCase()))
     .filter((row) => row.videoId.toLowerCase().includes(videoIdFilter.toLowerCase()))
-    .sort((a, b) => b[sort] - a[sort]), [brandCreative, campaign, query, videoIdFilter, onlySpend, sort]);
+    .sort((a, b) => { const value=(row:CreativeRow)=>sort==="cpo"?(row.orders?row.cost/row.orders:0):row[sort]; const av=value(a),bv=value(b); const result=typeof av==="string"?av.localeCompare(String(bv)):Number(av)-Number(bv); return sortDesc?-result:result }), [brandCreative, campaign, creativeFrom, creativeTo, query, videoIdFilter, onlySpend, sort, sortDesc]);
   const creativeCampaigns = useMemo(()=>{
     const builtinBrand=importHistory.find(x=>x.id==="builtin-creative-feb26")?.brand;
     if(builtinBrand && selectedBrand===builtinBrand) return dashboardData.creative.campaigns;
@@ -149,6 +154,8 @@ export default function Home() {
   const creativeSummary = selectedCreativeCampaigns.reduce((acc, item) => ({ cost: acc.cost + item.cost, revenue: acc.revenue + item.revenue, orders: acc.orders + item.orders, clicks: acc.clicks + item.clicks, impressions: acc.impressions + item.impressions }), { cost: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 });
   const creativeRoi = creativeSummary.cost ? creativeSummary.revenue / creativeSummary.cost : 0;
   const creativeTiers = creativeRows.reduce((acc, row) => { const tier = creativeTier(row.roi); acc[tier] += 1; return acc; }, { great: 0, good: 0, mid: 0, bad: 0 });
+  const creativeTop5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>b.revenue-a.revenue).slice(0,5),[creativeRows]);
+  const creativeBad5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>a.roi-b.roi||b.cost-a.cost).slice(0,5),[creativeRows]);
   const live = dashboardData.live.summary;
   const hostLabels = useMemo(() => {
     const labels = new Map<string, Map<string, number>>();
@@ -213,6 +220,7 @@ export default function Home() {
   const overviewRevenue = (overviewScope !== "live" ? overviewCreative.revenue : 0) + (overviewScope !== "creative" ? overviewLive.revenue : 0);
   const overviewOrders = (overviewScope !== "live" ? overviewCreative.orders : 0) + (overviewScope !== "creative" ? overviewLive.orders : 0);
   const setLiveSortKey = (key: LiveSortKey) => { if (liveSort === key) setLiveSortDesc(!liveSortDesc); else { setLiveSort(key); setLiveSortDesc(true); } };
+  const setCreativeSortKey = (key: SortKey) => { if(sort===key)setSortDesc(!sortDesc);else{setSort(key);setSortDesc(true)} };
   const resetLiveFilters = () => { setLiveFrom(LIVE_MIN); setLiveTo(LIVE_MAX); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
   const openHost = (key: string) => { setSelectedHost(key); setLiveHost(key); setLiveView("detail"); setLiveSort("launchedAt"); setLiveSortDesc(true); };
   const activeBrandEmpty = selectedBrand !== "all" && !creativeSource.some(x=>(x.brand||"Brand Februari")===selectedBrand) && !liveSource.some(x=>(x.brand||"Brand Februari")===selectedBrand);
@@ -276,10 +284,13 @@ export default function Home() {
     {!activeBrandEmpty && tab === "creative" && <>
       <section className="section-heading"><div><span>CREATIVE VIDEO / PER CAMPAIGN</span><h2>Creative performance</h2><p>Satu baris = kombinasi campaign + product + video. Product card tetap dipisahkan dari video.</p></div><div className="snapshot">SNAPSHOT EXPORT <b>FEB 2026</b></div></section>
       <section className="controls">
+        <label>Dari tanggal posting<input type="date" value={creativeFrom} max={creativeTo||undefined} onChange={(e)=>setCreativeFrom(e.target.value)}/></label>
+        <label>Sampai<input type="date" value={creativeTo} min={creativeFrom||undefined} onChange={(e)=>setCreativeTo(e.target.value)}/></label>
         <label>Campaign<select value={campaign} onChange={(e) => setCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
         <label>Cari creative<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Caption, account, video ID…" /></label>
-        <label>Urutkan<select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}><option value="cost">Spend terbesar</option><option value="revenue">GMV terbesar</option><option value="roi">ROI terbesar</option><option value="orders">Order terbanyak</option></select></label>
+        <label>Urutkan<select value={sort} onChange={(e) => {setSort(e.target.value as SortKey);setSortDesc(true)}}><option value="cost">Spend terbesar</option><option value="revenue">GMV terbesar</option><option value="roi">ROI terbesar</option><option value="orders">Order terbanyak</option><option value="ctr">CTR terbesar</option></select></label>
         <button className={`toggle ${onlySpend ? "on" : ""}`} onClick={() => setOnlySpend(!onlySpend)}><i /> Hanya ada spend</button>
+        <button className="reset-creative" onClick={()=>{setCreativeFrom("");setCreativeTo("");setCampaign("all");setQuery("");setVideoIdFilter("")}}>Reset</button>
       </section>
       <section className="kpi-grid five">
         <Kpi label="Spend" value={money(creativeSummary.cost, true)} note={money(creativeSummary.cost)} />
@@ -297,11 +308,12 @@ export default function Home() {
       <section className="panel campaign-picker"><div className="panel-head"><div><span>CAMPAIGN OVERVIEW</span><h2>Pilih campaign untuk membuka video di dalamnya</h2></div><button onClick={() => setCampaign("all")}>Semua campaign</button></div><div className="campaign-card-grid">{dashboardData.creative.campaigns.map((item) => <button key={item.name} className={campaign === item.name ? "active" : ""} onClick={() => { setCampaign(item.name); setQuery(""); }}><span>{item.name}</span><strong>{money(item.revenue, true)}</strong><small>{number(item.creatives)} creative · ROI {roi(item.roi)}</small><i><b style={{ width: `${Math.max(2, item.revenue / Math.max(1, ...dashboardData.creative.campaigns.map((entry) => entry.revenue)) * 100)}%` }} /></i></button>)}</div></section>
       <section className="two-col creative-panels">
         <article className="panel"><div className="panel-head"><div><span>CAMPAIGN MIX</span><h2>Revenue by campaign</h2></div></div><Bars items={dashboardData.creative.campaigns.filter((item) => item.cost > 0)} /></article>
-        <article className="panel compact"><div className="panel-head"><div><span>DELIVERY STATUS</span><h2>100K rows composition</h2></div></div><div className="status-list">{dashboardData.creative.statuses.map((item) => <div key={item.name}><span><i className={item.name === "Delivering" ? "green" : ""} />{item.name}</span><b>{number(item.count)}</b></div>)}</div></article>
+        <article className="panel compact"><div className="panel-head"><div><span>CAMPAIGN DELIVERY</span><h2>Delivery status dan komposisi</h2></div></div><div className="status-list">{dashboardData.creative.statuses.map((item) => <div key={item.name}><span><i className={item.name === "Delivering" ? "green" : ""} />{item.name}</span><b>{number(item.count)}</b></div>)}</div></article>
       </section>
+      <section className="creative-performance-picks">{([["TOP 5 VIDEO","Performa terbaik berdasarkan GMV",creativeTop5,"great"],["5 BAD VIDEO PERFORMANCE","Prioritas evaluasi berdasarkan ROI",creativeBad5,"bad"]] as const).map(([eyebrow,heading,rows,tone])=><article className={`panel performance-pick ${tone}`} key={eyebrow}><div className="panel-head"><div><span>{eyebrow}</span><h2>{heading}</h2></div></div>{rows.map((row,i)=><button key={`${row.videoId}-${i}`} onClick={()=>setSelectedCreative(row)}><b>{i+1}</b><span><strong>{title(row.title||row.videoId,45)}</strong><small>{row.account} · {row.campaign}</small></span><em>{money(row.revenue,true)}<small>{roi(row.roi)}</small></em></button>)}</article>)}</section>
       <section className="panel table-panel">
         <div className="panel-head"><div><span>VIDEO ID OVERVIEW</span><h2>{number(creativeRows.length)} video sesuai filter</h2></div><label className="video-id-filter">Filter Video ID<input value={videoIdFilter} onChange={(e)=>setVideoIdFilter(e.target.value)} placeholder="Ketik Video ID…"/><button onClick={()=>setVideoIdFilter("")}>Reset</button></label><div className="roi-legend"><span><i className="good"/>ROI ≥ 6 sangat bagus</span><span><i className="mid"/>ROI 2–5,99 perlu cek</span><span><i className="bad"/>ROI ≤ 2 buruk</span></div></div>
-        <div className="table-wrap"><table className="creative-detail-table"><thead><tr><th>Video ID / creative</th><th>Akun</th><th>Campaign</th><th>Spend</th><th>GMV</th><th>Orders</th><th>CPO</th><th>ROI</th><th>CTR</th><th>Aksi</th></tr></thead><tbody>{creativeRows.slice(0, 100).map((row) => { const url = tiktokVideoUrl(row); return <tr key={`${row.campaignId}-${row.productId}-${row.videoId}`} onClick={() => setSelectedCreative(row)}><td>{url?<a className="video-id" href={url} target="_blank" rel="noreferrer" onClick={(event)=>event.stopPropagation()}>{row.videoId}</a>:<button className="video-id-button" onClick={(event)=>{event.stopPropagation();setSelectedCreative(row)}}>{row.videoId}</button>}<span title={row.title}>{title(row.title, 52)}</span></td><td><b>{row.account}</b><span>{row.type} · {row.status}</span></td><td>{row.campaign}</td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td>{number(row.orders)}</td><td>{row.orders?money(row.cost/row.orders):"—"}</td><td><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)} · {creativeTierLabel(row.roi)}</strong></td><td>{pct(row.ctr)}</td><td>{url ? <a href={url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Cek video ↗</a> : <button onClick={(event) => { event.stopPropagation(); setSelectedCreative(row); }}>Detail</button>}</td></tr> })}</tbody></table></div>
+        <div className="table-wrap"><table className="creative-detail-table"><thead><tr>{([["Video ID / creative","videoId"],["Akun","account"],["Campaign","campaign"],["Spend","cost"],["GMV","revenue"],["Orders","orders"],["CPO","cpo"],["ROI","roi"],["CTR","ctr"]] as const).map(([label,key])=><th key={key}><button className={sort===key?"sorted":""} onClick={()=>setCreativeSortKey(key)}>{label} {sort===key?(sortDesc?"↓":"↑"):"↕"}</button></th>)}<th>Aksi</th></tr></thead><tbody>{creativeRows.slice(0, 100).map((row) => { const url = tiktokVideoUrl(row); return <tr key={`${row.campaignId}-${row.productId}-${row.videoId}`} onClick={() => setSelectedCreative(row)}><td>{url?<a className="video-id" href={url} target="_blank" rel="noreferrer" onClick={(event)=>event.stopPropagation()}>{row.videoId}</a>:<button className="video-id-button" onClick={(event)=>{event.stopPropagation();setSelectedCreative(row)}}>{row.videoId}</button>}<span title={row.title}>{title(row.title, 52)}</span></td><td><b>{row.account}</b><span>{row.type} · {row.status}</span></td><td>{row.campaign}</td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td>{number(row.orders)}</td><td>{row.orders?money(row.cost/row.orders):"—"}</td><td><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)} · {creativeTierLabel(row.roi)}</strong></td><td>{pct(row.ctr)}</td><td>{url ? <a href={url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Cek video ↗</a> : <button onClick={(event) => { event.stopPropagation(); setSelectedCreative(row); }}>Detail</button>}</td></tr> })}</tbody></table></div>
       </section>
     </>}
 
