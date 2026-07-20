@@ -196,7 +196,11 @@ export default function Home() {
     filteredLiveSessions.forEach((row) => { const item = days.get(row.day) ?? { day: row.day, cost: 0, revenue: 0 }; item.cost += row.cost; item.revenue += row.revenue; days.set(row.day, item); });
     return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   }, [filteredLiveSessions]);
-  const overviewVideos = useMemo(() => brandCreative.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0 && (overviewCampaign === "all" || row.campaign === overviewCampaign)), [brandCreative, overviewCampaign]);
+  const overviewCreativeRows = useMemo(() => brandCreative
+    .filter((row) => overviewCampaign === "all" || row.campaign === overviewCampaign)
+    .filter((row) => !overviewFrom || (row.postedAt !== "-" && row.postedAt.slice(0,10) >= overviewFrom))
+    .filter((row) => !overviewTo || (row.postedAt !== "-" && row.postedAt.slice(0,10) <= overviewTo)), [brandCreative, overviewCampaign, overviewFrom, overviewTo]);
+  const overviewVideos = useMemo(() => overviewCreativeRows.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0), [overviewCreativeRows]);
   const topVideos = useMemo(() => [...overviewVideos].sort((a,b) => b.revenue-a.revenue).slice(0,10), [overviewVideos]);
   const roasDistribution = useMemo(()=>{
     const bins=[{label:"0–1",min:0,max:1,color:"#e55353",count:0},{label:"1–2",min:1,max:2,color:"#ef7d32",count:0},{label:"2–3",min:2,max:3,color:"#f0a534",count:0},{label:"3–4",min:3,max:4,color:"#e8b331",count:0},{label:"4–5",min:4,max:5,color:"#91c83e",count:0},{label:"5+",min:5,max:Infinity,color:"#4fb486",count:0}];
@@ -214,7 +218,7 @@ export default function Home() {
     const hours=Array.from({length:24},(_,hour)=>{ const rows=list.filter(c=>c.hour===hour); const revenue=rows.reduce((a,c)=>a+c.revenue,0); const cost=rows.reduce((a,c)=>a+c.cost,0); const sessions=rows.reduce((a,c)=>a+c.sessions,0); return {hour,revenue,cost,sessions,roi:cost?revenue/cost:0}; }).filter(x=>x.sessions).sort((a,b)=>b.revenue-a.revenue);
     return {cells:list,max,best:hours.slice(0,3)};
   },[filteredLiveSessions]);
-  const overviewCreative = (overviewCampaign === "all" ? creativeCampaigns : creativeCampaigns.filter(x=>x.name===overviewCampaign)).reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,count:a.count+1}),{cost:0,revenue:0,orders:0,count:0});
+  const overviewCreative = overviewCreativeRows.reduce((a,x)=>{a.cost+=x.cost;a.revenue+=x.revenue;a.orders+=x.orders;a.campaigns.add(x.campaign);return a},{cost:0,revenue:0,orders:0,campaigns:new Set<string>()});
   const overviewLive = brandLive.filter(x=>x.day>=overviewFrom&&x.day<=overviewTo).reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,rowCount:a.rowCount+1,views:a.views+x.views}),{cost:0,revenue:0,orders:0,rowCount:0,views:0});
   const overviewCost = (overviewScope !== "live" ? overviewCreative.cost : 0) + (overviewScope !== "creative" ? overviewLive.cost : 0);
   const overviewRevenue = (overviewScope !== "live" ? overviewCreative.revenue : 0) + (overviewScope !== "creative" ? overviewLive.revenue : 0);
@@ -263,7 +267,7 @@ export default function Home() {
           <div className="score-meta"><span>Total spend<b>{money(overviewCost, true)}</b></span><span>Gross revenue<b>{money(overviewRevenue, true)}</b></span><span>Total orders<b>{number(overviewOrders)}</b></span></div>
         </article>
         <div className="kpi-grid overview-kpis">
-          {overviewScope !== "live" && <><Kpi label="Creative GMV" value={money(overviewCreative.revenue, true)} note={`${number(overviewCreative.orders)} orders`} tone="cyan" /><Kpi label="Creative ROI" value={roi(overviewCreative.cost?overviewCreative.revenue/overviewCreative.cost:0)} note={`${number(overviewCreative.count)} campaigns`} /><Kpi label="Creative Spend" value={money(overviewCreative.cost, true)} note={`CPO ${overviewCreative.orders?money(overviewCreative.cost/overviewCreative.orders):"—"}`} /></>}
+          {overviewScope !== "live" && <><Kpi label="Creative GMV" value={money(overviewCreative.revenue, true)} note={`${number(overviewCreative.orders)} orders · tanggal posting`} tone="cyan" /><Kpi label="Creative ROI" value={roi(overviewCreative.cost?overviewCreative.revenue/overviewCreative.cost:0)} note={`${number(overviewCreative.campaigns.size)} campaigns`} /><Kpi label="Creative Spend" value={money(overviewCreative.cost, true)} note={`CPO ${overviewCreative.orders?money(overviewCreative.cost/overviewCreative.orders):"—"}`} /></>}
           {overviewScope !== "creative" && <><Kpi label="Live GMV" value={money(overviewLive.revenue, true)} note={`${number(overviewLive.rowCount)} sessions`} tone="pink" /><Kpi label="Live ROI" value={roi(overviewLive.cost?overviewLive.revenue/overviewLive.cost:0)} note={`${number(overviewLive.views)} views`} /><Kpi label="Live Spend" value={money(overviewLive.cost, true)} note={`CPO ${overviewLive.orders?money(overviewLive.cost/overviewLive.orders):"—"}`} /></>}
         </div>
       </section>
