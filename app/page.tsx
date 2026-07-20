@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import dashboardData from "./dashboard-data.json";
 
 type Tab = "overview" | "creative" | "live";
@@ -8,6 +8,9 @@ type SortKey = "cost" | "revenue" | "roi" | "orders";
 type LiveSortKey = "launchedAt" | "cost" | "revenue" | "roi" | "orders" | "views";
 type LiveView = "leader" | "detail";
 type CreativeRow = (typeof dashboardData.creative.creatives)[number];
+type LiveRow = (typeof dashboardData.live.sessions)[number];
+const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
+const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
 
 const money = (n: number, short = false) => {
   if (short) {
@@ -80,12 +83,39 @@ export default function Home() {
   const [selectedHost, setSelectedHost] = useState<string | null>(null);
   const [liveSort, setLiveSort] = useState<LiveSortKey>("revenue");
   const [liveSortDesc, setLiveSortDesc] = useState(true);
+  const [creativeSource, setCreativeSource] = useState<CreativeRow[]>(dashboardData.creative.creatives);
+  const [liveSource, setLiveSource] = useState<LiveRow[]>(dashboardData.live.sessions);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importMessage, setImportMessage] = useState("Data Februari bawaan sedang aktif.");
+  const [overviewScope, setOverviewScope] = useState<"all" | "creative" | "live">("all");
+  const [overviewCampaign, setOverviewCampaign] = useState("all");
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const creativeRows = useMemo(() => dashboardData.creative.creatives
+  const importExcel = async (file: File) => {
+    try {
+      setImportMessage(`Membaca ${file.name}…`);
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
+      if (!rows.length) throw new Error("Sheet kosong");
+      const headers = Object.keys(rows[0]).map((x) => x.toLowerCase()).join("|");
+      if (headers.includes("video id") && headers.includes("campaign name")) {
+        const mapped = rows.map((r) => { const cost = n(pick(r,["Cost"])); const revenue = n(pick(r,["Gross revenue","Revenue"])); return {
+          campaign:String(pick(r,["Campaign name"])), campaignId:String(pick(r,["Campaign ID"])), productId:String(pick(r,["Product ID"])), type:String(pick(r,["Creative type","Type"])||"Video"), title:String(pick(r,["Video caption","Creative name","Title"])), videoId:String(pick(r,["Video ID"])), account:String(pick(r,["TikTok account","Account","Creator username"])), postedAt:String(pick(r,["Video post time","Posted time"])), status:String(pick(r,["Status"])), authorization:String(pick(r,["Authorization status","Authorization"])), cost, revenue, orders:n(pick(r,["SKU orders","Orders"])), impressions:n(pick(r,["Impressions"])), clicks:n(pick(r,["Clicks"])), ctr:n(pick(r,["CTR"])), cvr:n(pick(r,["CVR"])), view2:n(pick(r,["2-second video view rate"])), view6:n(pick(r,["6-second video view rate"])), view25:n(pick(r,["Video views at 25%"])), view50:n(pick(r,["Video views at 50%"])), view75:n(pick(r,["Video views at 75%"])), view100:n(pick(r,["Video views at 100%"])), roi:cost?revenue/cost:0
+        } as CreativeRow; }).sort((a,b)=>b.cost-a.cost).slice(0,5000);
+        setCreativeSource(mapped); setImportMessage(`${rows.length.toLocaleString("id-ID")} baris creative dimuat; ${mapped.length.toLocaleString("id-ID")} baris spend terbesar tersedia untuk detail.`);
+      } else if (headers.includes("live name") && headers.includes("launched time")) {
+        const mapped = rows.map((r) => { const launchedAt=String(pick(r,["Launched time"])); const cost=n(pick(r,["Cost"])); const revenue=n(pick(r,["Gross revenue (Current Shop)","Gross revenue","Revenue"])); return { name:String(pick(r,["LIVE name"])), launchedAt, day:launchedAt.slice(0,10), campaign:String(pick(r,["Campaign name"])), campaignId:String(pick(r,["Campaign ID"])), status:String(pick(r,["Status"])), cost, revenue, orders:n(pick(r,["SKU orders (Current Shop)","SKU orders","Orders"])), views:n(pick(r,["LIVE views","Views"])), tenSecondViews:n(pick(r,["10s views"])), follows:n(pick(r,["LIVE follows","Follows"])), roi:cost?revenue/cost:0 } as LiveRow; });
+        setLiveSource(mapped); setImportMessage(`${rows.length.toLocaleString("id-ID")} sesi livestream berhasil dimuat dan heatmap diperbarui.`);
+      } else throw new Error("Kolom tidak dikenali sebagai export creative atau livestream TikTok");
+    } catch (error) { setImportMessage(`Import gagal: ${error instanceof Error ? error.message : "format file tidak dikenali"}`); }
+  };
+
+  const creativeRows = useMemo(() => creativeSource
     .filter((row) => campaign === "all" || row.campaign === campaign)
     .filter((row) => !onlySpend || row.cost > 0)
     .filter((row) => `${row.title} ${row.account} ${row.videoId}`.toLowerCase().includes(query.toLowerCase()))
-    .sort((a, b) => b[sort] - a[sort]), [campaign, query, onlySpend, sort]);
+    .sort((a, b) => b[sort] - a[sort]), [creativeSource, campaign, query, onlySpend, sort]);
   const selectedCreativeCampaigns = campaign === "all" ? dashboardData.creative.campaigns : dashboardData.creative.campaigns.filter((item) => item.name === campaign);
   const creativeSummary = selectedCreativeCampaigns.reduce((acc, item) => ({ cost: acc.cost + item.cost, revenue: acc.revenue + item.revenue, orders: acc.orders + item.orders, clicks: acc.clicks + item.clicks, impressions: acc.impressions + item.impressions }), { cost: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 });
   const creativeRoi = creativeSummary.cost ? creativeSummary.revenue / creativeSummary.cost : 0;
@@ -93,7 +123,7 @@ export default function Home() {
   const live = dashboardData.live.summary;
   const hostLabels = useMemo(() => {
     const labels = new Map<string, Map<string, number>>();
-    dashboardData.live.sessions.forEach((row) => {
+    liveSource.forEach((row) => {
       const key = hostEntityKey(row.campaign);
       const label = cleanHostLabel(row.campaign);
       const variants = labels.get(key) ?? new Map<string, number>();
@@ -101,13 +131,13 @@ export default function Home() {
       labels.set(key, variants);
     });
     return new Map([...labels].map(([key, variants]) => [key, [...variants].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0][0]]));
-  }, []);
-  const filteredLiveSessions = useMemo(() => dashboardData.live.sessions
+  }, [liveSource]);
+  const filteredLiveSessions = useMemo(() => liveSource
     .map((row) => ({ ...row, hostKey: hostEntityKey(row.campaign), host: hostLabels.get(hostEntityKey(row.campaign)) || cleanHostLabel(row.campaign), slot: liveSlot(row.launchedAt) }))
     .filter((row) => row.day >= liveFrom && row.day <= liveTo)
     .filter((row) => liveHost === "all" || row.hostKey === liveHost)
     .filter((row) => liveSlots.length === 0 || liveSlots.includes(row.slot))
-    .filter((row) => `${row.name} ${row.campaign} ${row.campaignId} ${row.host}`.toLowerCase().includes(liveQuery.toLowerCase())), [hostLabels, liveFrom, liveTo, liveHost, liveSlots, liveQuery]);
+    .filter((row) => `${row.name} ${row.campaign} ${row.campaignId} ${row.host}`.toLowerCase().includes(liveQuery.toLowerCase())), [liveSource, hostLabels, liveFrom, liveTo, liveHost, liveSlots, liveQuery]);
   const liveLeaders = useMemo(() => {
     const grouped = new Map<string, { key: string; host: string; sessions: number; cost: number; revenue: number; orders: number; views: number; follows: number; roi: number }>();
     filteredLiveSessions.forEach((row) => {
@@ -130,6 +160,24 @@ export default function Home() {
     filteredLiveSessions.forEach((row) => { const item = days.get(row.day) ?? { day: row.day, cost: 0, revenue: 0 }; item.cost += row.cost; item.revenue += row.revenue; days.set(row.day, item); });
     return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   }, [filteredLiveSessions]);
+  const overviewVideos = useMemo(() => creativeSource.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0 && (overviewCampaign === "all" || row.campaign === overviewCampaign)), [creativeSource, overviewCampaign]);
+  const topVideos = useMemo(() => [...overviewVideos].filter((row) => row.roi >= 4).sort((a,b) => b.revenue-a.revenue).slice(0,10), [overviewVideos]);
+  const videoBuckets = useMemo(() => ({
+    best:[...overviewVideos].filter((r)=>r.roi>=6).sort((a,b)=>b.revenue-a.revenue).slice(0,5),
+    mid:[...overviewVideos].filter((r)=>r.roi>2&&r.roi<4).sort((a,b)=>b.revenue-a.revenue).slice(0,5),
+    worst:[...overviewVideos].filter((r)=>r.roi<=2).sort((a,b)=>b.cost-a.cost).slice(0,5)
+  }), [overviewVideos]);
+  const heatmap = useMemo(() => {
+    const cells = new Map<string,{day:number;hour:number;revenue:number;cost:number;sessions:number}>();
+    filteredLiveSessions.forEach((row)=>{ const date=new Date(row.launchedAt.replace(" ","T")); const day=(date.getDay()+6)%7; const hour=date.getHours(); const key=`${day}-${hour}`; const cell=cells.get(key)??{day,hour,revenue:0,cost:0,sessions:0}; cell.revenue+=row.revenue;cell.cost+=row.cost;cell.sessions++;cells.set(key,cell); });
+    const list=[...cells.values()]; const max=Math.max(1,...list.map(c=>c.revenue));
+    const hours=Array.from({length:24},(_,hour)=>{ const rows=list.filter(c=>c.hour===hour); const revenue=rows.reduce((a,c)=>a+c.revenue,0); const cost=rows.reduce((a,c)=>a+c.cost,0); const sessions=rows.reduce((a,c)=>a+c.sessions,0); return {hour,revenue,cost,sessions,roi:cost?revenue/cost:0}; }).filter(x=>x.sessions).sort((a,b)=>b.revenue-a.revenue);
+    return {cells:list,max,best:hours.slice(0,3)};
+  },[filteredLiveSessions]);
+  const overviewCreative = (overviewCampaign === "all" ? dashboardData.creative.campaigns : dashboardData.creative.campaigns.filter(x=>x.name===overviewCampaign)).reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,count:a.count+1}),{cost:0,revenue:0,orders:0,count:0});
+  const overviewLive = live;
+  const overviewCost = (overviewScope !== "live" ? overviewCreative.cost : 0) + (overviewScope !== "creative" ? overviewLive.cost : 0);
+  const overviewRevenue = (overviewScope !== "live" ? overviewCreative.revenue : 0) + (overviewScope !== "creative" ? overviewLive.revenue : 0);
   const setLiveSortKey = (key: LiveSortKey) => { if (liveSort === key) setLiveSortDesc(!liveSortDesc); else { setLiveSort(key); setLiveSortDesc(true); } };
   const resetLiveFilters = () => { setLiveFrom(LIVE_MIN); setLiveTo(LIVE_MAX); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
   const openHost = (key: string) => { setSelectedHost(key); setLiveHost(key); setLiveView("detail"); setLiveSort("launchedAt"); setLiveSortDesc(true); };
@@ -137,7 +185,7 @@ export default function Home() {
   return <main>
     <header className="topbar">
       <div className="brand"><div className="brand-mark"><span>GM</span></div><div><h1>GMV Max Command Center</h1><p>Creative video + livestream performance</p></div></div>
-      <div className="period"><span>REPORTING PERIOD</span><b>01—28 FEB 2026</b></div>
+      <div className="top-actions"><button className="import-button" onClick={()=>setImportOpen(true)}>Import Excel</button><div className="period"><span>REPORTING PERIOD</span><b>01—28 FEB 2026</b></div></div>
     </header>
 
     <nav className="tabs" aria-label="Dashboard views">
@@ -147,25 +195,24 @@ export default function Home() {
     <DataHealth />
 
     {tab === "overview" && <>
+      <section className="overview-filter"><div><b>Filter overview</b><span>Ranking video mengikuti pilihan ini.</span></div><label>Data<select value={overviewScope} onChange={(e)=>setOverviewScope(e.target.value as typeof overviewScope)}><option value="all">Creative + Live</option><option value="creative">Creative saja</option><option value="live">Live saja</option></select></label><label>Campaign creative<select value={overviewCampaign} onChange={(e)=>setOverviewCampaign(e.target.value)}><option value="all">Semua campaign</option>{dashboardData.creative.campaigns.map(x=><option key={x.name}>{x.name}</option>)}</select></label><button onClick={()=>{setOverviewScope("all");setOverviewCampaign("all")}}>Reset</button></section>
       <section className="hero-grid">
         <article className="score-card">
           <div className="eyebrow">BLENDED PERFORMANCE</div>
-          <div className="score-ring"><div><strong>{roi((dashboardData.creative.summary.revenue + live.revenue) / (dashboardData.creative.summary.cost + live.cost))}</strong><span>combined ROI</span></div></div>
-          <div className="score-meta"><span>Total spend<b>{money(dashboardData.creative.summary.cost + live.cost, true)}</b></span><span>Gross revenue<b>{money(dashboardData.creative.summary.revenue + live.revenue, true)}</b></span></div>
+          <div className="score-ring"><div><strong>{roi(overviewCost ? overviewRevenue / overviewCost : 0)}</strong><span>filtered ROI</span></div></div>
+          <div className="score-meta"><span>Total spend<b>{money(overviewCost, true)}</b></span><span>Gross revenue<b>{money(overviewRevenue, true)}</b></span></div>
         </article>
         <div className="kpi-grid overview-kpis">
-          <Kpi label="Creative GMV" value={money(dashboardData.creative.summary.revenue, true)} note={`${number(dashboardData.creative.summary.orders)} orders`} tone="cyan" />
-          <Kpi label="Live GMV" value={money(live.revenue, true)} note={`${number(live.rowCount)} sessions`} tone="pink" />
-          <Kpi label="Creative ROI" value={roi(dashboardData.creative.summary.roi)} note={`${number(dashboardData.creative.summary.campaignCount)} campaigns`} />
-          <Kpi label="Live ROI" value={roi(live.roi)} note={`${number(live.views)} views`} />
-          <Kpi label="Creative Spend" value={money(dashboardData.creative.summary.cost, true)} note={`${number(dashboardData.creative.summary.videoRows)} video rows`} />
-          <Kpi label="Live Spend" value={money(live.cost, true)} note={`${money(live.cost / live.orders)} per order`} />
+          {overviewScope !== "live" && <><Kpi label="Creative GMV" value={money(overviewCreative.revenue, true)} note={`${number(overviewCreative.orders)} orders`} tone="cyan" /><Kpi label="Creative ROI" value={roi(overviewCreative.cost?overviewCreative.revenue/overviewCreative.cost:0)} note={`${number(overviewCreative.count)} campaigns`} /><Kpi label="Creative Spend" value={money(overviewCreative.cost, true)} note={overviewCampaign === "all" ? `${number(dashboardData.creative.summary.videoRows)} video rows` : overviewCampaign} /></>}
+          {overviewScope !== "creative" && <><Kpi label="Live GMV" value={money(live.revenue, true)} note={`${number(live.rowCount)} sessions`} tone="pink" /><Kpi label="Live ROI" value={roi(live.roi)} note={`${number(live.views)} views`} /><Kpi label="Live Spend" value={money(live.cost, true)} note={`${money(live.cost / live.orders)} per order`} /></>}
         </div>
       </section>
       <section className="two-col">
         <article className="panel"><div className="panel-head"><div><span>CREATIVE CAMPAIGNS</span><h2>Revenue leaders</h2></div><button onClick={() => setTab("creative")}>Explore →</button></div><Bars items={dashboardData.creative.campaigns} /></article>
         <article className="panel"><div className="panel-head"><div><span>LIVE CAMPAIGNS</span><h2>Revenue leaders</h2></div><button onClick={() => setTab("live")}>Explore →</button></div><Bars items={dashboardData.live.campaigns} /></article>
       </section>
+      <section className="panel top-video-panel"><div className="panel-head"><div><span>BEST VIDEO OVERVIEW</span><h2>Top 10 video berdasarkan GMV · ROI minimal 4x</h2></div><small>{topVideos.length} video</small></div><div className="top-video-grid">{topVideos.map((row,index)=><article key={`${row.videoId}-${row.campaignId}`} onClick={()=>setSelectedCreative(row)}><i>{String(index+1).padStart(2,"0")}</i><div><b>{title(row.title||row.videoId,48)}</b><span>{row.account} · {row.campaign}</span></div><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)}</strong><em>{money(row.revenue,true)}</em>{tiktokVideoUrl(row)&&<a href={tiktokVideoUrl(row)!} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Cek video ↗</a>}</article>)}</div></section>
+      <section className="video-bucket-grid">{([["Top bagus",videoBuckets.best,"great"],["Top sedang",videoBuckets.mid,"mid"],["Buruk terburuk",videoBuckets.worst,"bad"]] as const).map(([label,rows,tone])=><article className={`panel bucket ${tone}`} key={label}><div className="panel-head"><div><span>VIDEO CHECK</span><h2>{label}</h2></div></div>{rows.map((row,i)=><div className="bucket-row" key={`${row.videoId}-${i}`}><b>{i+1}.</b><button onClick={()=>setSelectedCreative(row)}><strong>{title(row.title||row.videoId,42)}</strong><span>{roi(row.roi)} · {money(row.revenue)}</span></button>{tiktokVideoUrl(row)&&<a href={tiktokVideoUrl(row)!} target="_blank" rel="noreferrer">Cek video</a>}</div>)}</article>)}</section>
       <section className="insight-grid">
         <article><span className="insight-no">01</span><div><b>Creative concentration tinggi</b><p>Serum Copper 1 menyumbang {pct(dashboardData.creative.campaigns[0].revenue / dashboardData.creative.summary.revenue)} creative GMV. Pisahkan export per campaign untuk memastikan campaign kecil tidak terpotong limit.</p></div></article>
         <article><span className="insight-no">02</span><div><b>Live paling efisien</b><p>{dashboardData.live.campaigns[0].name} menghasilkan ROI {roi(dashboardData.live.campaigns[0].roi)}—tertinggi di antara campaign live Februari.</p></div></article>
@@ -224,6 +271,7 @@ export default function Home() {
         <article className="panel"><div className="panel-head"><div><span>DAILY PULSE</span><h2>Cost vs gross revenue</h2></div><div className="chart-legend"><i className="cost" />Cost <i />GMV</div></div><div className="daily-combo">{filteredDaily.map((day) => { const max = Math.max(1, ...filteredDaily.map((item) => item.revenue)); return <div key={day.day} title={`${day.day} · GMV ${money(day.revenue)} · Cost ${money(day.cost)}`}><span className="gmv-bar" style={{ height: `${Math.max(2, day.revenue / max * 100)}%` }} /><span className="cost-mark" style={{ bottom: `${Math.max(1, day.cost / max * 100)}%` }} /><small>{day.day.slice(8)}</small></div> })}</div></article>
         <article className="panel"><div className="panel-head"><div><span>TOP HOST BY GMV</span><h2>Leaderboard terfilter</h2></div><small>klik untuk detail</small></div><div className="host-bars">{liveLeaders.slice(0, 10).map((item, index) => { const max = Math.max(1, ...liveLeaders.map((host) => host.revenue)); return <button key={item.key} onClick={() => openHost(item.key)}><span>{index + 1}. {item.host}</span><i><b style={{ width: `${Math.max(2, item.revenue / max * 100)}%` }} /></i><strong>{money(item.revenue, true)}</strong></button> })}</div></article>
       </section>
+      <section className="panel heatmap-panel"><div className="panel-head"><div><span>LIVE TIME HEATMAP</span><h2>Jam live paling produktif</h2><p>Warna = GMV, angka = ROI. Mengikuti seluruh filter live di atas.</p></div><div className="best-hours">{heatmap.best.map(x=><span key={x.hour}><b>{String(x.hour).padStart(2,"0")}:00</b>{money(x.revenue,true)} · {roi(x.roi)}</span>)}</div></div><div className="heatmap"><div className="heat-corner">Hari</div>{Array.from({length:24},(_,h)=><div className="heat-hour" key={h}>{String(h).padStart(2,"0")}</div>)}{["Sen","Sel","Rab","Kam","Jum","Sab","Min"].map((day,d)=><div className="heat-row" key={day}><b>{day}</b>{Array.from({length:24},(_,h)=>{const cell=heatmap.cells.find(x=>x.day===d&&x.hour===h);const intensity=cell?cell.revenue/heatmap.max:0;return <i key={h} style={{background:cell?`rgba(40,230,214,${.08+intensity*.82})`:undefined}} title={cell?`${day} ${String(h).padStart(2,"0")}:00 · ${cell.sessions} sesi · GMV ${money(cell.revenue)} · ROI ${roi(cell.cost?cell.revenue/cell.cost:0)}`:"Tidak ada sesi"}>{cell&&cell.cost?roi(cell.revenue/cell.cost).replace("x",""):""}</i>})}</div>)}</div></section>
       <section className="panel live-table-panel">
         <div className="live-table-tabs"><button className={liveView === "leader" ? "active" : ""} onClick={() => { setLiveView("leader"); setSelectedHost(null); if (liveHost !== "all") setLiveHost("all"); }}>Leaderboard Host</button><button className={liveView === "detail" ? "active" : ""} onClick={() => setLiveView("detail")}>Detail Campaign</button><div className="roi-legend"><span><i className="good" />ROI ≥ 10</span><span><i className="mid" />ROI 4–9,99</span><span><i className="bad" />ROI &lt; 4</span></div></div>
         {liveView === "leader" ? <div className="table-wrap"><table className="live-table"><thead><tr><th>Host</th><th>Sesi</th><th><button onClick={() => setLiveSortKey("cost")}>Cost {liveSort === "cost" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("revenue")}>Gross revenue {liveSort === "revenue" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("roi")}>ROI {liveSort === "roi" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("orders")}>Orders {liveSort === "orders" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th>CPO</th><th><button onClick={() => setLiveSortKey("views")}>Views {liveSort === "views" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th>Follows</th></tr></thead><tbody>{liveLeaders.map((row) => <tr key={row.key} className="host-row" onClick={() => openHost(row.key)}><td><b>{row.host}</b><span>{row.key} · klik untuk detail ›</span></td><td>{number(row.sessions)}</td><td>{money(row.cost)}</td><td><div className="revenue-cell"><span>{money(row.revenue)}</span><i><b style={{ width: `${Math.max(2, row.revenue / Math.max(1, ...liveLeaders.map((item) => item.revenue)) * 100)}%` }} /></i></div></td><td><strong className={`roi-badge ${roiTone(row.roi)}`}>{roi(row.roi)}</strong></td><td>{number(row.orders)}</td><td>{row.orders ? money(row.cost / row.orders) : "—"}</td><td>{number(row.views)}</td><td>{number(row.follows)}</td></tr>)}</tbody></table></div>
@@ -233,6 +281,7 @@ export default function Home() {
     </>}
 
     {selectedCreative && <div className="creative-modal-backdrop" role="presentation" onClick={() => setSelectedCreative(null)}><section className="creative-modal" role="dialog" aria-modal="true" aria-labelledby="creative-modal-title" onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><span>VIDEO PERFORMANCE DETAIL</span><h2 id="creative-modal-title">{selectedCreative.videoId}</h2></div><button aria-label="Tutup detail video" onClick={() => setSelectedCreative(null)}>×</button></div><p className="modal-caption">{selectedCreative.title}</p><div className="modal-tags"><span>{selectedCreative.campaign}</span><span>{selectedCreative.account}</span><span>{selectedCreative.type}</span><span>{selectedCreative.status}</span></div><div className="modal-kpis"><article><span>Spend</span><b>{money(selectedCreative.cost)}</b></article><article><span>Gross revenue</span><b>{money(selectedCreative.revenue)}</b></article><article><span>Orders</span><b>{number(selectedCreative.orders)}</b></article><article><span>ROI</span><b className={`creative-tier ${creativeTier(selectedCreative.roi)}`}>{roi(selectedCreative.roi)}</b></article><article><span>CTR</span><b>{pct(selectedCreative.ctr)}</b></article><article><span>CVR</span><b>{pct(selectedCreative.cvr)}</b></article></div><div className="video-funnel"><div><span>2s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view2 * 100)}%` }} /></i><strong>{pct(selectedCreative.view2)}</strong></div><div><span>6s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view6 * 100)}%` }} /></i><strong>{pct(selectedCreative.view6)}</strong></div><div><span>25%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view25 * 100)}%` }} /></i><strong>{pct(selectedCreative.view25)}</strong></div><div><span>50%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view50 * 100)}%` }} /></i><strong>{pct(selectedCreative.view50)}</strong></div><div><span>100%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view100 * 100)}%` }} /></i><strong>{pct(selectedCreative.view100)}</strong></div></div><div className="modal-meta"><span>Posted <b>{selectedCreative.postedAt}</b></span><span>Authorization <b>{selectedCreative.authorization}</b></span><span>Campaign ID <b>{selectedCreative.campaignId}</b></span><span>Product ID <b>{selectedCreative.productId}</b></span></div>{tiktokVideoUrl(selectedCreative) ? <a className="open-tiktok" href={tiktokVideoUrl(selectedCreative)!} target="_blank" rel="noreferrer">Buka video di TikTok ↗</a> : <p className="video-unavailable">URL TikTok tidak tersedia untuk product card atau baris tanpa Video ID/account yang valid.</p>}</section></div>}
+    {importOpen && <div className="creative-modal-backdrop" onClick={()=>setImportOpen(false)}><section className="import-modal" onClick={(e)=>e.stopPropagation()}><div className="modal-top"><div><span>IMPORT DATA</span><h2>Masukkan export TikTok Excel</h2></div><button onClick={()=>setImportOpen(false)}>×</button></div><p>Upload file creative atau livestream. Jenis file dikenali otomatis dari nama kolom.</p><input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={(e)=>e.target.files?.[0]&&importExcel(e.target.files[0])}/><button className="choose-file" onClick={()=>fileRef.current?.click()}>Pilih file Excel</button><small>{importMessage}</small></section></div>}
     <footer><span>GMV MAX · FEBRUARY TEST DATA</span><p>Source: TikTok Shop Ads exports provided by user. Metrics recalculated from source rows.</p></footer>
   </main>;
 }
