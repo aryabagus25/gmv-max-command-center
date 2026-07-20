@@ -202,6 +202,7 @@ export default function Home() {
     .filter((row) => !overviewFrom || (row.postedAt !== "-" && row.postedAt.slice(0,10) >= overviewFrom))
     .filter((row) => !overviewTo || (row.postedAt !== "-" && row.postedAt.slice(0,10) <= overviewTo)), [brandCreative, overviewCampaign, overviewFrom, overviewTo]);
   const overviewVideos = useMemo(() => overviewCreativeRows.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0), [overviewCreativeRows]);
+  const overviewCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewCreativeRows.forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[overviewCreativeRows]);
   const topVideos = useMemo(() => [...overviewVideos].sort((a,b) => b.revenue-a.revenue).slice(0,10), [overviewVideos]);
   const roasDistribution = useMemo(()=>{
     const bins=[{label:"0–1",min:0,max:1,color:"#e55353",count:0},{label:"1–2",min:1,max:2,color:"#ef7d32",count:0},{label:"2–3",min:2,max:3,color:"#f0a534",count:0},{label:"3–4",min:3,max:4,color:"#e8b331",count:0},{label:"4–5",min:4,max:5,color:"#91c83e",count:0},{label:"5+",min:5,max:Infinity,color:"#4fb486",count:0}];
@@ -220,7 +221,9 @@ export default function Home() {
     return {cells:list,max,best:hours.slice(0,3)};
   },[filteredLiveSessions]);
   const overviewCreative = overviewCreativeRows.reduce((a,x)=>{a.cost+=x.cost;a.revenue+=x.revenue;a.orders+=x.orders;a.campaigns.add(x.campaign);return a},{cost:0,revenue:0,orders:0,campaigns:new Set<string>()});
-  const overviewLive = brandLive.filter(x=>x.day>=overviewFrom&&x.day<=overviewTo).reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,rowCount:a.rowCount+1,views:a.views+x.views}),{cost:0,revenue:0,orders:0,rowCount:0,views:0});
+  const overviewLiveRows = brandLive.filter(x=>x.day>=overviewFrom&&x.day<=overviewTo);
+  const overviewLive = overviewLiveRows.reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,rowCount:a.rowCount+1,views:a.views+x.views}),{cost:0,revenue:0,orders:0,rowCount:0,views:0});
+  const overviewLiveCampaigns = (()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewLiveRows.forEach(row=>{const name=cleanHostLabel(row.campaign);const item=grouped.get(name)??{name,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(name,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)})();
   const overviewCost = (overviewScope !== "live" ? overviewCreative.cost : 0) + (overviewScope !== "creative" ? overviewLive.cost : 0);
   const overviewRevenue = (overviewScope !== "live" ? overviewCreative.revenue : 0) + (overviewScope !== "creative" ? overviewLive.revenue : 0);
   const overviewOrders = (overviewScope !== "live" ? overviewCreative.orders : 0) + (overviewScope !== "creative" ? overviewLive.orders : 0);
@@ -273,8 +276,8 @@ export default function Home() {
         </div>
       </section>
       <section className="two-col">
-        <article className="panel"><div className="panel-head"><div><span>CREATIVE CAMPAIGNS</span><h2>Revenue leaders</h2></div><button onClick={() => setTab("creative")}>Explore →</button></div><Bars items={dashboardData.creative.campaigns} /></article>
-        <article className="panel"><div className="panel-head"><div><span>LIVE CAMPAIGNS</span><h2>Revenue leaders</h2></div><button onClick={() => setTab("live")}>Explore →</button></div><Bars items={dashboardData.live.campaigns} /></article>
+        <article className="panel"><div className="panel-head"><div><span>CREATIVE CAMPAIGNS</span><h2>Revenue leaders · terfilter</h2></div><button onClick={() => setTab("creative")}>Explore →</button></div><Bars items={overviewCreativeCampaigns} /></article>
+        <article className="panel"><div className="panel-head"><div><span>LIVE CAMPAIGNS</span><h2>Revenue leaders · terfilter</h2></div><button onClick={() => setTab("live")}>Explore →</button></div><Bars items={overviewLiveCampaigns} /></article>
       </section>
       <section className="panel top-video-panel"><div className="panel-head"><div><span>BEST VIDEO OVERVIEW</span><h2>Top 10 video berdasarkan GMV · ROI</h2></div><small>{topVideos.length} video</small></div><div className="top-video-grid">{topVideos.map((row,index)=><article key={`${row.videoId}-${row.campaignId}`} onClick={()=>setSelectedCreative(row)}><i>{String(index+1).padStart(2,"0")}</i><div><b>{title(row.title||row.videoId,48)}</b><span>{row.account} · {row.campaign}</span></div><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)}</strong><em>{money(row.revenue,true)}</em>{tiktokVideoUrl(row)&&<a href={tiktokVideoUrl(row)!} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Cek video ↗</a>}</article>)}</div></section>
       <section className="panel roas-panel"><div className="panel-head"><div><span>VIDEO PORTFOLIO</span><h2>ROAS Distribution</h2><p>{number(overviewVideos.length)} video detail tersedia</p></div></div><div className="roas-stack">{roasDistribution.map(bin=><i key={bin.label} style={{width:`${bin.count/Math.max(1,overviewVideos.length)*100}%`,background:bin.color}} title={`${bin.label}x · ${number(bin.count)} video`}>{bin.count>=Math.max(1,overviewVideos.length*.08)?number(bin.count):""}</i>)}</div><div className="roas-legend">{roasDistribution.map(bin=><span key={bin.label}><i style={{background:bin.color}}/>{bin.label}x <b>{number(bin.count)}</b></span>)}</div></section>
