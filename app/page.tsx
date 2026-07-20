@@ -7,8 +7,9 @@ type Tab = "overview" | "creative" | "live";
 type SortKey = "cost" | "revenue" | "roi" | "orders";
 type LiveSortKey = "launchedAt" | "cost" | "revenue" | "roi" | "orders" | "views";
 type LiveView = "leader" | "detail";
-type CreativeRow = (typeof dashboardData.creative.creatives)[number] & { brand?: string };
-type LiveRow = (typeof dashboardData.live.sessions)[number] & { brand?: string; durationMinutes?: number };
+type CreativeRow = (typeof dashboardData.creative.creatives)[number] & { brand?: string; importId?: string };
+type LiveRow = (typeof dashboardData.live.sessions)[number] & { brand?: string; importId?: string; durationMinutes?: number };
+type ImportRecord = { id:string; brand:string; file:string; kind:"Creative"|"Livestream"; rows:number; importedAt:string; builtin?:boolean };
 const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
 
@@ -94,6 +95,14 @@ export default function Home() {
   const [videoIdFilter, setVideoIdFilter] = useState("");
   const [brandName, setBrandName] = useState("Brand Februari");
   const [selectedBrand, setSelectedBrand] = useState("all");
+  const [brandRecords, setBrandRecords] = useState(["Brand Februari"]);
+  const [brandModalOpen, setBrandModalOpen] = useState(false);
+  const [editingBrand, setEditingBrand] = useState<string|null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [importHistory, setImportHistory] = useState<ImportRecord[]>([
+    {id:"builtin-creative-feb26",brand:"Brand Februari",file:"Creative Februari 2026.xlsx",kind:"Creative",rows:100000,importedAt:"Data bawaan",builtin:true},
+    {id:"builtin-live-feb26",brand:"Brand Februari",file:"Livestream Februari 2026.xlsx",kind:"Livestream",rows:194,importedAt:"Data bawaan",builtin:true}
+  ]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const importExcel = async (file: File) => {
@@ -104,19 +113,22 @@ export default function Home() {
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
       if (!rows.length) throw new Error("Sheet kosong");
       const headers = Object.keys(rows[0]).map((x) => x.toLowerCase()).join("|");
+      const targetBrand = selectedBrand === "all" ? brandName.trim() : selectedBrand;
+      if (!targetBrand) throw new Error("Pilih brand terlebih dahulu");
+      const importId = `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
       if (headers.includes("video id") && headers.includes("campaign name")) {
         const mapped = rows.map((r) => { const cost = n(pick(r,["Cost"])); const revenue = n(pick(r,["Gross revenue","Revenue"])); return {
           brand:brandName.trim()||"Tanpa brand", campaign:String(pick(r,["Campaign name"])), campaignId:String(pick(r,["Campaign ID"])), productId:String(pick(r,["Product ID"])), type:String(pick(r,["Creative type","Type"])||"Video"), title:String(pick(r,["Video caption","Creative name","Title"])), videoId:String(pick(r,["Video ID"])), account:String(pick(r,["TikTok account","Account","Creator username"])), postedAt:String(pick(r,["Video post time","Posted time"])), status:String(pick(r,["Status"])), authorization:String(pick(r,["Authorization status","Authorization"])), cost, revenue, orders:n(pick(r,["SKU orders","Orders"])), impressions:n(pick(r,["Impressions"])), clicks:n(pick(r,["Clicks"])), ctr:n(pick(r,["CTR"])), cvr:n(pick(r,["CVR"])), view2:n(pick(r,["2-second video view rate"])), view6:n(pick(r,["6-second video view rate"])), view25:n(pick(r,["Video views at 25%"])), view50:n(pick(r,["Video views at 50%"])), view75:n(pick(r,["Video views at 75%"])), view100:n(pick(r,["Video views at 100%"])), roi:cost?revenue/cost:0
         } as CreativeRow; }).sort((a,b)=>b.cost-a.cost);
-        setCreativeSource(prev=>[...prev,...mapped]); setSelectedBrand(brandName.trim()||"Tanpa brand"); setImportMessage(`${rows.length.toLocaleString("id-ID")} baris creative ditambahkan ke brand ${brandName}.`);
+        mapped.forEach(row=>{row.brand=targetBrand;row.importId=importId}); setCreativeSource(prev=>[...prev,...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Creative",rows:rows.length,importedAt:new Date().toLocaleString("id-ID")},...prev]); setImportMessage(`${rows.length.toLocaleString("id-ID")} baris creative ditambahkan ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else if (headers.includes("live name") && headers.includes("launched time")) {
         const mapped = rows.map((r) => { const launchedAt=String(pick(r,["Launched time"])); const cost=n(pick(r,["Cost"])); const revenue=n(pick(r,["Gross revenue (Current Shop)","Gross revenue","Revenue"])); return { brand:brandName.trim()||"Tanpa brand", name:String(pick(r,["LIVE name"])), launchedAt, day:launchedAt.slice(0,10), campaign:String(pick(r,["Campaign name"])), campaignId:String(pick(r,["Campaign ID"])), status:String(pick(r,["Status"])), cost, revenue, orders:n(pick(r,["SKU orders (Current Shop)","SKU orders","Orders"])), views:n(pick(r,["LIVE views","Views"])), tenSecondViews:n(pick(r,["10s views"])), follows:n(pick(r,["LIVE follows","Follows"])), durationMinutes:n(pick(r,["LIVE duration (min)","Duration (min)","Duration minutes","LIVE duration"])), roi:cost?revenue/cost:0 } as LiveRow; });
-        setLiveSource(prev=>[...prev,...mapped]); setSelectedBrand(brandName.trim()||"Tanpa brand"); setImportMessage(`${rows.length.toLocaleString("id-ID")} sesi livestream ditambahkan ke brand ${brandName}.`);
+        mapped.forEach(row=>{row.brand=targetBrand;row.importId=importId}); setLiveSource(prev=>[...prev,...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Livestream",rows:rows.length,importedAt:new Date().toLocaleString("id-ID")},...prev]); setImportMessage(`${rows.length.toLocaleString("id-ID")} sesi livestream ditambahkan ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else throw new Error("Kolom tidak dikenali sebagai export creative atau livestream TikTok");
     } catch (error) { setImportMessage(`Import gagal: ${error instanceof Error ? error.message : "format file tidak dikenali"}`); }
   };
 
-  const brands = useMemo(()=>[...new Set([...creativeSource.map(x=>x.brand||"Brand Februari"),...liveSource.map(x=>x.brand||"Brand Februari")])].sort(),[creativeSource,liveSource]);
+  const brands = brandRecords;
   const brandCreative = useMemo(()=>creativeSource.filter(x=>selectedBrand==="all"||(x.brand||"Brand Februari")===selectedBrand),[creativeSource,selectedBrand]);
   const brandLive = useMemo(()=>liveSource.filter(x=>selectedBrand==="all"||(x.brand||"Brand Februari")===selectedBrand),[liveSource,selectedBrand]);
   const creativeRows = useMemo(() => brandCreative
@@ -126,12 +138,13 @@ export default function Home() {
     .filter((row) => row.videoId.toLowerCase().includes(videoIdFilter.toLowerCase()))
     .sort((a, b) => b[sort] - a[sort]), [brandCreative, campaign, query, videoIdFilter, onlySpend, sort]);
   const creativeCampaigns = useMemo(()=>{
-    if(selectedBrand==="Brand Februari") return dashboardData.creative.campaigns;
-    const base = selectedBrand==="all" ? dashboardData.creative.campaigns.map(x=>({...x})) : [];
+    const builtinBrand=importHistory.find(x=>x.id==="builtin-creative-feb26")?.brand;
+    if(builtinBrand && selectedBrand===builtinBrand) return dashboardData.creative.campaigns;
+    const base = selectedBrand==="all" && builtinBrand ? dashboardData.creative.campaigns.map(x=>({...x})) : [];
     const grouped=new Map(base.map(x=>[x.name,x]));
     brandCreative.filter(x=>Boolean(x.brand)).forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,orders:0,clicks:0,impressions:0,creatives:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.clicks+=row.clicks;item.impressions+=row.impressions;item.creatives+=1;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});
     return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue);
-  },[brandCreative,selectedBrand]);
+  },[brandCreative,selectedBrand,importHistory]);
   const selectedCreativeCampaigns = campaign === "all" ? creativeCampaigns : creativeCampaigns.filter((item) => item.name === campaign);
   const creativeSummary = selectedCreativeCampaigns.reduce((acc, item) => ({ cost: acc.cost + item.cost, revenue: acc.revenue + item.revenue, orders: acc.orders + item.orders, clicks: acc.clicks + item.clicks, impressions: acc.impressions + item.impressions }), { cost: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 });
   const creativeRoi = creativeSummary.cost ? creativeSummary.revenue / creativeSummary.cost : 0;
@@ -202,9 +215,24 @@ export default function Home() {
   const setLiveSortKey = (key: LiveSortKey) => { if (liveSort === key) setLiveSortDesc(!liveSortDesc); else { setLiveSort(key); setLiveSortDesc(true); } };
   const resetLiveFilters = () => { setLiveFrom(LIVE_MIN); setLiveTo(LIVE_MAX); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
   const openHost = (key: string) => { setSelectedHost(key); setLiveHost(key); setLiveView("detail"); setLiveSort("launchedAt"); setLiveSortDesc(true); };
+  const activeBrandEmpty = selectedBrand !== "all" && !creativeSource.some(x=>(x.brand||"Brand Februari")===selectedBrand) && !liveSource.some(x=>(x.brand||"Brand Februari")===selectedBrand);
+  const saveBrand = () => {
+    const next=brandName.trim(); if(!next) return;
+    if(editingBrand){setBrandRecords(prev=>prev.map(x=>x===editingBrand?next:x));setCreativeSource(prev=>prev.map(x=>(x.brand||"Brand Februari")===editingBrand?{...x,brand:next}:x));setLiveSource(prev=>prev.map(x=>(x.brand||"Brand Februari")===editingBrand?{...x,brand:next}:x));setImportHistory(prev=>prev.map(x=>x.brand===editingBrand?{...x,brand:next}:x));setSelectedBrand(next)}
+    else if(!brandRecords.includes(next)){setBrandRecords(prev=>[...prev,next]);setSelectedBrand(next)}
+    setEditingBrand(null);setBrandModalOpen(false);setTab("overview");
+  };
+  const deleteImport = (record:ImportRecord) => {
+    if(!window.confirm(`Hapus import ${record.file}? Data dari import ini akan dikeluarkan dari dashboard.`)) return;
+    if(record.builtin){
+      if(record.kind==="Creative") setCreativeSource(prev=>prev.filter(x=>Boolean(x.brand)));
+      else setLiveSource(prev=>prev.filter(x=>Boolean(x.brand)));
+    } else {setCreativeSource(prev=>prev.filter(x=>x.importId!==record.id));setLiveSource(prev=>prev.filter(x=>x.importId!==record.id))}
+    setImportHistory(prev=>prev.filter(x=>x.id!==record.id));
+  };
 
   return <main className="app-shell">
-    <aside className="sidebar"><div className="side-brand"><span>GM</span><div><b>GMV Max</b><small>Performance Hub</small></div></div><label className="brand-select">Brand<select value={selectedBrand} onChange={(e)=>{setSelectedBrand(e.target.value);setCampaign("all");setOverviewCampaign("all")}}><option value="all">Semua brand</option>{brands.map(x=><option key={x}>{x}</option>)}</select></label><button className="add-brand" onClick={()=>setImportOpen(true)}>＋ Tambah brand</button><nav><span>DASHBOARD</span><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}>▦ Overview</button><span>ANALISA</span><button className={tab==="creative"?"active":""} onClick={()=>setTab("creative")}>▷ Creative Video</button><button className={tab==="live"?"active":""} onClick={()=>setTab("live")}>◉ Livestream</button><span>INPUT</span><button onClick={()=>setImportOpen(true)}>⇧ Import Data</button><button onClick={()=>window.print()}>↧ Export Laporan</button></nav><div className="side-foot">TikTok Shop Ads<br/><b>Snapshot analytics</b></div></aside>
+    <aside className="sidebar"><div className="side-brand"><span>GM</span><div><b>GMV Max</b><small>Performance Hub</small></div></div><label className="brand-select">Brand<select value={selectedBrand} onChange={(e)=>{setSelectedBrand(e.target.value);setBrandName(e.target.value==="all"?"":e.target.value);setCampaign("all");setOverviewCampaign("all")}}><option value="all">Semua brand</option>{brands.map(x=><option key={x}>{x}</option>)}</select></label><div className="brand-actions"><button onClick={()=>{setEditingBrand(null);setBrandName("");setBrandModalOpen(true)}}>＋ Tambah</button><button disabled={selectedBrand==="all"} onClick={()=>{setEditingBrand(selectedBrand);setBrandName(selectedBrand);setBrandModalOpen(true)}}>✎ Edit</button></div><nav><span>DASHBOARD</span><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}>▦ Overview</button><span>ANALISA</span><button className={tab==="creative"?"active":""} onClick={()=>setTab("creative")}>▷ Creative Video</button><button className={tab==="live"?"active":""} onClick={()=>setTab("live")}>◉ Livestream</button><span>INPUT</span><button onClick={()=>setImportOpen(true)}>⇧ Import Data</button><button onClick={()=>setHistoryOpen(true)}>↶ Riwayat Import</button><button onClick={()=>window.print()}>↧ Export Laporan</button></nav><div className="side-foot">TikTok Shop Ads<br/><b>Snapshot analytics</b></div></aside>
     <div className="app-content">
     <header className="topbar">
       <div className="brand"><div className="brand-mark"><span>GM</span></div><div><h1>GMV Max Command Center</h1><p>Creative video + livestream performance</p></div></div>
@@ -215,9 +243,10 @@ export default function Home() {
       {(["overview", "creative", "live"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "active" : ""}>{item === "overview" ? "Overview" : item === "creative" ? "Creative Video" : "Livestream"}<span>{item === "creative" ? "100K" : item === "live" ? "194" : ""}</span></button>)}
     </nav>
 
-    <DataHealth />
+    {!activeBrandEmpty && <DataHealth />}
+    {activeBrandEmpty && <section className="empty-brand"><div>□</div><h2>Belum ada data untuk {selectedBrand}</h2><p>Brand sudah dibuat. Import file creative atau livestream untuk mulai mengisi dashboard.</p><button onClick={()=>setImportOpen(true)}>Import data sekarang</button></section>}
 
-    {tab === "overview" && <>
+    {!activeBrandEmpty && tab === "overview" && <>
       <section className="overview-filter"><div><b>Filter overview</b><span>Brand aktif: {selectedBrand==="all"?"Semua brand":selectedBrand}</span></div><label>Dari tanggal<input type="date" value={overviewFrom} onChange={(e)=>setOverviewFrom(e.target.value)}/></label><label>Sampai<input type="date" value={overviewTo} onChange={(e)=>setOverviewTo(e.target.value)}/></label><label>Data<select value={overviewScope} onChange={(e)=>setOverviewScope(e.target.value as typeof overviewScope)}><option value="all">Creative + Live</option><option value="creative">Creative saja</option><option value="live">Live saja</option></select></label><label>Campaign<select value={overviewCampaign} onChange={(e)=>setOverviewCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map(x=><option key={x.name}>{x.name}</option>)}</select></label><button onClick={()=>{setOverviewScope("all");setOverviewCampaign("all");setOverviewFrom("2026-02-01");setOverviewTo("2026-02-28")}}>Reset</button></section>
       <section className="hero-grid">
         <article className="score-card">
@@ -244,7 +273,7 @@ export default function Home() {
       </section>
     </>}
 
-    {tab === "creative" && <>
+    {!activeBrandEmpty && tab === "creative" && <>
       <section className="section-heading"><div><span>CREATIVE VIDEO / PER CAMPAIGN</span><h2>Creative performance</h2><p>Satu baris = kombinasi campaign + product + video. Product card tetap dipisahkan dari video.</p></div><div className="snapshot">SNAPSHOT EXPORT <b>FEB 2026</b></div></section>
       <section className="controls">
         <label>Campaign<select value={campaign} onChange={(e) => setCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
@@ -276,7 +305,7 @@ export default function Home() {
       </section>
     </>}
 
-    {tab === "live" && <>
+    {!activeBrandEmpty && tab === "live" && <>
       <section className="section-heading"><div><span>LIVESTREAM DATA</span><h2>Live host performance</h2><p>Nama campaign yang mirip otomatis digabung menjadi satu host. Klik host untuk membuka semua sesi campaign-nya.</p></div><div className="snapshot">{number(filteredLiveSessions.length)} SESSIONS <b>{number(liveLeaders.length)} HOSTS</b></div></section>
       <section className="live-filters" aria-label="Filter livestream">
         <label>Dari tanggal<input type="date" value={liveFrom} min={LIVE_MIN} max={liveTo} onChange={(e) => setLiveFrom(e.target.value)} /></label>
@@ -309,7 +338,9 @@ export default function Home() {
     </>}
 
     {selectedCreative && <div className="creative-modal-backdrop" role="presentation" onClick={() => setSelectedCreative(null)}><section className="creative-modal" role="dialog" aria-modal="true" aria-labelledby="creative-modal-title" onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><span>VIDEO PERFORMANCE DETAIL</span><h2 id="creative-modal-title">{selectedCreative.videoId}</h2></div><button aria-label="Tutup detail video" onClick={() => setSelectedCreative(null)}>×</button></div><p className="modal-caption">{selectedCreative.title}</p><div className="modal-tags"><span>{selectedCreative.campaign}</span><span>{selectedCreative.account}</span><span>{selectedCreative.type}</span><span>{selectedCreative.status}</span></div><div className="modal-kpis"><article><span>Spend</span><b>{money(selectedCreative.cost)}</b></article><article><span>Gross revenue</span><b>{money(selectedCreative.revenue)}</b></article><article><span>Orders</span><b>{number(selectedCreative.orders)}</b></article><article><span>ROI</span><b className={`creative-tier ${creativeTier(selectedCreative.roi)}`}>{roi(selectedCreative.roi)}</b></article><article><span>CTR</span><b>{pct(selectedCreative.ctr)}</b></article><article><span>CVR</span><b>{pct(selectedCreative.cvr)}</b></article></div><div className="video-funnel"><div><span>2s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view2 * 100)}%` }} /></i><strong>{pct(selectedCreative.view2)}</strong></div><div><span>6s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view6 * 100)}%` }} /></i><strong>{pct(selectedCreative.view6)}</strong></div><div><span>25%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view25 * 100)}%` }} /></i><strong>{pct(selectedCreative.view25)}</strong></div><div><span>50%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view50 * 100)}%` }} /></i><strong>{pct(selectedCreative.view50)}</strong></div><div><span>100%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view100 * 100)}%` }} /></i><strong>{pct(selectedCreative.view100)}</strong></div></div><div className="modal-meta"><span>Posted <b>{selectedCreative.postedAt}</b></span><span>Authorization <b>{selectedCreative.authorization}</b></span><span>Campaign ID <b>{selectedCreative.campaignId}</b></span><span>Product ID <b>{selectedCreative.productId}</b></span></div>{tiktokVideoUrl(selectedCreative) ? <a className="open-tiktok" href={tiktokVideoUrl(selectedCreative)!} target="_blank" rel="noreferrer">Buka video di TikTok ↗</a> : <p className="video-unavailable">URL TikTok tidak tersedia untuk product card atau baris tanpa Video ID/account yang valid.</p>}</section></div>}
-    {importOpen && <div className="creative-modal-backdrop" onClick={()=>setImportOpen(false)}><section className="import-modal" onClick={(e)=>e.stopPropagation()}><div className="modal-top"><div><span>IMPORT DATA PER BRAND</span><h2>Masukkan export TikTok Excel</h2></div><button onClick={()=>setImportOpen(false)}>×</button></div><p>Tulis nama brand, lalu upload creative atau livestream. Data baru ditambahkan ke brand tersebut dan bisa dipilih dari sidebar.</p><label className="brand-input">Nama brand<input value={brandName} onChange={(e)=>setBrandName(e.target.value)} placeholder="Contoh: Piyya Beauty" /></label><input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={(e)=>e.target.files?.[0]&&importExcel(e.target.files[0])}/><button className="choose-file" onClick={()=>fileRef.current?.click()}>Pilih file Excel</button><small>{importMessage}</small></section></div>}
+    {brandModalOpen && <div className="creative-modal-backdrop" onClick={()=>setBrandModalOpen(false)}><section className="brand-modal" onClick={(e)=>e.stopPropagation()}><div className="modal-top"><div><span>BRAND WORKSPACE</span><h2>{editingBrand?"Edit nama brand":"Buat brand baru"}</h2></div><button onClick={()=>setBrandModalOpen(false)}>×</button></div><p>Brand dibuat kosong terlebih dahulu. Setelah masuk ke dashboard brand, baru import file Excel.</p><label>Nama brand<input autoFocus value={brandName} onChange={(e)=>setBrandName(e.target.value)} placeholder="Contoh: Piyya Beauty"/></label><button className="save-brand" disabled={!brandName.trim()} onClick={saveBrand}>{editingBrand?"Simpan perubahan":"Buat brand"}</button></section></div>}
+    {historyOpen && <div className="creative-modal-backdrop" onClick={()=>setHistoryOpen(false)}><section className="history-modal" onClick={(e)=>e.stopPropagation()}><div className="modal-top"><div><span>DATA MANAGEMENT</span><h2>Riwayat Import</h2></div><button onClick={()=>setHistoryOpen(false)}>×</button></div><p>Setiap file tercatat per brand. Menghapus riwayat juga menghapus data hasil import tersebut dari dashboard.</p><div className="history-list">{importHistory.filter(x=>selectedBrand==="all"||x.brand===selectedBrand).map(record=><article key={record.id}><div><b>{record.file}</b><span>{record.brand} · {record.kind} · {number(record.rows)} baris</span><small>{record.importedAt}</small></div><button onClick={()=>deleteImport(record)}>Hapus</button></article>)}{importHistory.filter(x=>selectedBrand==="all"||x.brand===selectedBrand).length===0&&<div className="history-empty">Belum ada riwayat import.</div>}</div></section></div>}
+    {importOpen && <div className="creative-modal-backdrop" onClick={()=>setImportOpen(false)}><section className="import-modal" onClick={(e)=>e.stopPropagation()}><div className="modal-top"><div><span>IMPORT DATA</span><h2>Upload Excel ke brand</h2></div><button onClick={()=>setImportOpen(false)}>×</button></div><label className="brand-input">Pilih brand<select value={selectedBrand} onChange={(e)=>{setSelectedBrand(e.target.value);setBrandName(e.target.value)}}><option value="all">Pilih brand…</option>{brands.map(x=><option key={x}>{x}</option>)}</select></label><p>File creative atau livestream akan dikenali otomatis dan dimasukkan hanya ke brand terpilih.</p><input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={(e)=>e.target.files?.[0]&&importExcel(e.target.files[0])}/><button className="choose-file" disabled={selectedBrand==="all"} onClick={()=>fileRef.current?.click()}>{selectedBrand==="all"?"Pilih brand terlebih dahulu":`Pilih file untuk ${selectedBrand}`}</button><small>{importMessage}</small></section></div>}
     <footer><span>GMV MAX · FEBRUARY TEST DATA</span><p>Source: TikTok Shop Ads exports provided by user. Metrics recalculated from source rows.</p></footer>
     </div>
   </main>;
