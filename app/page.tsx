@@ -7,6 +7,7 @@ type Tab = "overview" | "creative" | "live";
 type SortKey = "cost" | "revenue" | "roi" | "orders";
 type LiveSortKey = "launchedAt" | "cost" | "revenue" | "roi" | "orders" | "views";
 type LiveView = "leader" | "detail";
+type CreativeRow = (typeof dashboardData.creative.creatives)[number];
 
 const money = (n: number, short = false) => {
   if (short) {
@@ -31,6 +32,13 @@ const liveDates = dashboardData.live.sessions.map((row) => row.day).filter(Boole
 const LIVE_MIN = liveDates[0] || "2026-02-01";
 const LIVE_MAX = liveDates[liveDates.length - 1] || "2026-02-28";
 const roiTone = (value: number) => value >= 10 ? "roi-good" : value >= 4 ? "roi-mid" : value > 0 ? "roi-bad" : "roi-none";
+const creativeTier = (value: number) => value >= 6 ? "great" : value >= 4 ? "good" : value > 2 ? "mid" : "bad";
+const creativeTierLabel = (value: number) => value >= 6 ? "Sangat bagus" : value >= 4 ? "Bagus" : value > 2 ? "Sedang" : "Buruk";
+const tiktokVideoUrl = (row: CreativeRow) => {
+  const account = row.account.replace(/^@/, "").trim();
+  if (row.type.toLowerCase() !== "video" || !/^\d{10,}$/.test(row.videoId) || !account || account === "-") return null;
+  return `https://www.tiktok.com/@${encodeURIComponent(account)}/video/${row.videoId}`;
+};
 
 function Kpi({ label, value, note, tone = "default" }: { label: string; value: string; note: string; tone?: string }) {
   return <article className={`kpi ${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
@@ -62,6 +70,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [onlySpend, setOnlySpend] = useState(true);
   const [sort, setSort] = useState<SortKey>("cost");
+  const [selectedCreative, setSelectedCreative] = useState<CreativeRow | null>(null);
   const [liveFrom, setLiveFrom] = useState(LIVE_MIN);
   const [liveTo, setLiveTo] = useState(LIVE_MAX);
   const [liveHost, setLiveHost] = useState("all");
@@ -80,6 +89,7 @@ export default function Home() {
   const selectedCreativeCampaigns = campaign === "all" ? dashboardData.creative.campaigns : dashboardData.creative.campaigns.filter((item) => item.name === campaign);
   const creativeSummary = selectedCreativeCampaigns.reduce((acc, item) => ({ cost: acc.cost + item.cost, revenue: acc.revenue + item.revenue, orders: acc.orders + item.orders, clicks: acc.clicks + item.clicks, impressions: acc.impressions + item.impressions }), { cost: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 });
   const creativeRoi = creativeSummary.cost ? creativeSummary.revenue / creativeSummary.cost : 0;
+  const creativeTiers = creativeRows.reduce((acc, row) => { const tier = creativeTier(row.roi); acc[tier] += 1; return acc; }, { great: 0, good: 0, mid: 0, bad: 0 });
   const live = dashboardData.live.summary;
   const hostLabels = useMemo(() => {
     const labels = new Map<string, Map<string, number>>();
@@ -177,11 +187,18 @@ export default function Home() {
         <Kpi label="Blended ROI" value={roi(creativeRoi)} note="Revenue ÷ spend" />
         <Kpi label="CTR" value={pct(creativeSummary.impressions ? creativeSummary.clicks / creativeSummary.impressions : 0)} note={`${number(creativeSummary.clicks)} clicks`} />
       </section>
+      <section className="creative-tier-grid" aria-label="Klasifikasi performa video">
+        <article className="great"><span>Sangat bagus</span><strong>{number(creativeTiers.great)}</strong><small>ROI ≥ 6x</small></article>
+        <article className="good"><span>Bagus</span><strong>{number(creativeTiers.good)}</strong><small>ROI 4–5,99x</small></article>
+        <article className="mid"><span>Sedang</span><strong>{number(creativeTiers.mid)}</strong><small>ROI 2–3,99x</small></article>
+        <article className="bad"><span>Buruk</span><strong>{number(creativeTiers.bad)}</strong><small>ROI ≤ 2x</small></article>
+      </section>
+      <section className="panel campaign-picker"><div className="panel-head"><div><span>CAMPAIGN OVERVIEW</span><h2>Pilih campaign untuk membuka video di dalamnya</h2></div><button onClick={() => setCampaign("all")}>Semua campaign</button></div><div className="campaign-card-grid">{dashboardData.creative.campaigns.map((item) => <button key={item.name} className={campaign === item.name ? "active" : ""} onClick={() => { setCampaign(item.name); setQuery(""); }}><span>{item.name}</span><strong>{money(item.revenue, true)}</strong><small>{number(item.creatives)} creative · ROI {roi(item.roi)}</small><i><b style={{ width: `${Math.max(2, item.revenue / Math.max(1, ...dashboardData.creative.campaigns.map((entry) => entry.revenue)) * 100)}%` }} /></i></button>)}</div></section>
       <section className="two-col creative-panels">
         <article className="panel"><div className="panel-head"><div><span>CAMPAIGN MIX</span><h2>Revenue by campaign</h2></div></div><Bars items={dashboardData.creative.campaigns.filter((item) => item.cost > 0)} /></article>
         <article className="panel compact"><div className="panel-head"><div><span>DELIVERY STATUS</span><h2>100K rows composition</h2></div></div><div className="status-list">{dashboardData.creative.statuses.map((item) => <div key={item.name}><span><i className={item.name === "Delivering" ? "green" : ""} />{item.name}</span><b>{number(item.count)}</b></div>)}</div></article>
       </section>
-      <section className="panel table-panel"><div className="panel-head"><div><span>CREATIVE DETAIL</span><h2>{number(creativeRows.length)} records in view</h2></div><small>Menampilkan 100 teratas</small></div><div className="table-wrap"><table><thead><tr><th>Creative</th><th>Campaign</th><th>Status</th><th>Spend</th><th>GMV</th><th>Orders</th><th>ROI</th><th>CTR</th></tr></thead><tbody>{creativeRows.slice(0, 100).map((row) => <tr key={`${row.campaignId}-${row.productId}-${row.videoId}`}><td><b title={row.title}>{title(row.title)}</b><span>{row.account} · {row.type}</span></td><td>{row.campaign}</td><td><em className={row.status === "Delivering" ? "good" : ""}>{row.status}</em></td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td>{number(row.orders)}</td><td><strong className={row.roi >= creativeRoi ? "positive" : ""}>{roi(row.roi)}</strong></td><td>{pct(row.ctr)}</td></tr>)}</tbody></table></div></section>
+      <section className="panel table-panel"><div className="panel-head"><div><span>VIDEO ID OVERVIEW</span><h2>{number(creativeRows.length)} video sesuai filter</h2></div><small>Klik baris untuk detail · 100 teratas</small></div><div className="table-wrap"><table className="creative-detail-table"><thead><tr><th>Video ID / creative</th><th>Akun</th><th>Campaign</th><th>Spend</th><th>GMV</th><th>Orders</th><th>ROI</th><th>CTR</th><th>Aksi</th></tr></thead><tbody>{creativeRows.slice(0, 100).map((row) => { const url = tiktokVideoUrl(row); return <tr key={`${row.campaignId}-${row.productId}-${row.videoId}`} onClick={() => setSelectedCreative(row)}><td><b className="video-id">{row.videoId}</b><span title={row.title}>{title(row.title, 52)}</span></td><td><b>{row.account}</b><span>{row.type} · {row.status}</span></td><td>{row.campaign}</td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td>{number(row.orders)}</td><td><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)} · {creativeTierLabel(row.roi)}</strong></td><td>{pct(row.ctr)}</td><td>{url ? <a href={url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Cek video ↗</a> : <button onClick={(event) => { event.stopPropagation(); setSelectedCreative(row); }}>Detail</button>}</td></tr> })}</tbody></table></div></section>
     </>}
 
     {tab === "live" && <>
@@ -215,6 +232,7 @@ export default function Home() {
       <p className="live-note">ROI dihitung ulang dari Gross Revenue (Current Shop) ÷ Cost. Kolom durasi tidak ditampilkan karena tidak tersedia di export Februari. Penggabungan host mengabaikan kata umum seperti “live”, “beauty”, “official”, perbedaan kapital, tanda baca, dan huruf berulang.</p>
     </>}
 
+    {selectedCreative && <div className="creative-modal-backdrop" role="presentation" onClick={() => setSelectedCreative(null)}><section className="creative-modal" role="dialog" aria-modal="true" aria-labelledby="creative-modal-title" onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><span>VIDEO PERFORMANCE DETAIL</span><h2 id="creative-modal-title">{selectedCreative.videoId}</h2></div><button aria-label="Tutup detail video" onClick={() => setSelectedCreative(null)}>×</button></div><p className="modal-caption">{selectedCreative.title}</p><div className="modal-tags"><span>{selectedCreative.campaign}</span><span>{selectedCreative.account}</span><span>{selectedCreative.type}</span><span>{selectedCreative.status}</span></div><div className="modal-kpis"><article><span>Spend</span><b>{money(selectedCreative.cost)}</b></article><article><span>Gross revenue</span><b>{money(selectedCreative.revenue)}</b></article><article><span>Orders</span><b>{number(selectedCreative.orders)}</b></article><article><span>ROI</span><b className={`creative-tier ${creativeTier(selectedCreative.roi)}`}>{roi(selectedCreative.roi)}</b></article><article><span>CTR</span><b>{pct(selectedCreative.ctr)}</b></article><article><span>CVR</span><b>{pct(selectedCreative.cvr)}</b></article></div><div className="video-funnel"><div><span>2s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view2 * 100)}%` }} /></i><strong>{pct(selectedCreative.view2)}</strong></div><div><span>6s view</span><i><b style={{ width: `${Math.min(100, selectedCreative.view6 * 100)}%` }} /></i><strong>{pct(selectedCreative.view6)}</strong></div><div><span>25%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view25 * 100)}%` }} /></i><strong>{pct(selectedCreative.view25)}</strong></div><div><span>50%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view50 * 100)}%` }} /></i><strong>{pct(selectedCreative.view50)}</strong></div><div><span>100%</span><i><b style={{ width: `${Math.min(100, selectedCreative.view100 * 100)}%` }} /></i><strong>{pct(selectedCreative.view100)}</strong></div></div><div className="modal-meta"><span>Posted <b>{selectedCreative.postedAt}</b></span><span>Authorization <b>{selectedCreative.authorization}</b></span><span>Campaign ID <b>{selectedCreative.campaignId}</b></span><span>Product ID <b>{selectedCreative.productId}</b></span></div>{tiktokVideoUrl(selectedCreative) ? <a className="open-tiktok" href={tiktokVideoUrl(selectedCreative)!} target="_blank" rel="noreferrer">Buka video di TikTok ↗</a> : <p className="video-unavailable">URL TikTok tidak tersedia untuk product card atau baris tanpa Video ID/account yang valid.</p>}</section></div>}
     <footer><span>GMV MAX · FEBRUARY TEST DATA</span><p>Source: TikTok Shop Ads exports provided by user. Metrics recalculated from source rows.</p></footer>
   </main>;
 }
