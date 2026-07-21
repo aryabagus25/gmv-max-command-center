@@ -105,6 +105,7 @@ const LIVE_MAX = liveDates[liveDates.length - 1] || "2026-02-28";
 const roiTone = (value: number) => value >= 10 ? "roi-good" : value >= 4 ? "roi-mid" : value > 0 ? "roi-bad" : "roi-none";
 const creativeTier = (value: number) => value >= 6 ? "great" : value >= 4 ? "good" : value > 2 ? "mid" : "bad";
 const creativeTierLabel = (value: number) => value >= 6 ? "Sangat bagus" : value >= 4 ? "Bagus" : value > 2 ? "Sedang" : "Buruk";
+const campaignKey = (value: string) => String(value || "").toLowerCase().replace(/[_\s]+/g, " ").trim();
 const tiktokVideoUrl = (row: CreativeRow) => {
   const account = row.account.replace(/^@/, "").trim();
   if (row.type.toLowerCase() !== "video" || !/^\d{10,}$/.test(row.videoId) || !account || account === "-") return null;
@@ -115,15 +116,15 @@ function Kpi({ label, value, note, tone = "default" }: { label: string; value: s
   return <article className={`kpi ${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function Bars({ items, metric = "revenue" }: { items: Array<{ name: string; revenue: number; cost: number; roi: number }>; metric?: "revenue" | "roi" }) {
+function Bars({ items, metric = "revenue", onSelect }: { items: Array<{ name: string; revenue: number; cost: number; roi: number }>; metric?: "revenue" | "roi"; onSelect?: (name: string) => void }) {
   const shown = items.slice(0, 5);
   const max = Math.max(1, ...shown.map((item) => item[metric]));
   return <div className="bars">
-    {shown.map((item, index) => <div className="bar-row" key={item.name}>
+    {shown.map((item, index) => <button type="button" className={`bar-row ${onSelect ? "clickable" : ""}`} key={item.name} onClick={() => onSelect?.(item.name)}>
       <div className="bar-label"><span className="rank">{String(index + 1).padStart(2, "0")}</span><span title={item.name}>{title(item.name, 22)}</span></div>
       <div className="bar-track"><i style={{ width: `${Math.max(2, item[metric] / max * 100)}%` }} /></div>
       <b>{metric === "roi" ? roi(item.roi) : money(item.revenue, true)}</b>
-    </div>)}
+    </button>)}
   </div>;
 }
 
@@ -261,25 +262,26 @@ export default function Home() {
     return Boolean(x.importId)||!hasRealImport;
   }),[liveSource,selectedBrand,importHistory]);
   const liveBounds = useMemo(()=>{const days=brandLive.map(row=>row.day).filter(Boolean).sort();return {min:days[0]||LIVE_MIN,max:days[days.length-1]||LIVE_MAX}},[brandLive]);
-  const creativeRows = useMemo(() => brandCreative
-    .filter((row) => campaign === "all" || row.campaign === campaign)
+  const creativeBaseRows = useMemo(() => brandCreative
     .filter((row) => creativeRowInRange(row,creativeFrom,creativeTo))
     .filter((row) => !onlySpend || row.cost > 0)
     .filter((row) => `${row.title} ${row.account} ${row.videoId}`.toLowerCase().includes(query.toLowerCase()))
-    .filter((row) => row.videoId.toLowerCase().includes(videoIdFilter.toLowerCase()))
-    .sort((a, b) => { const value=(row:CreativeRow)=>sort==="cpo"?(row.orders?row.cost/row.orders:0):row[sort]; const av=value(a),bv=value(b); const result=typeof av==="string"?av.localeCompare(String(bv)):Number(av)-Number(bv); return sortDesc?-result:result }), [brandCreative, campaign, creativeFrom, creativeTo, query, videoIdFilter, onlySpend, sort, sortDesc]);
+    .filter((row) => row.videoId.toLowerCase().includes(videoIdFilter.toLowerCase())), [brandCreative, creativeFrom, creativeTo, query, videoIdFilter, onlySpend]);
+  const creativeRows = useMemo(() => creativeBaseRows
+    .filter((row) => campaign === "all" || campaignKey(row.campaign) === campaignKey(campaign))
+    .sort((a, b) => { const value=(row:CreativeRow)=>sort==="cpo"?(row.orders?row.cost/row.orders:0):row[sort]; const av=value(a),bv=value(b); const result=typeof av==="string"?av.localeCompare(String(bv)):Number(av)-Number(bv); return sortDesc?-result:result }), [creativeBaseRows, campaign, sort, sortDesc]);
   const creativeCampaigns = useMemo(()=>{
     const builtinBrand=importHistory.find(x=>x.id==="builtin-creative-feb26")?.brand;
     const hasRealImport=selectedBrand!=="all"&&importHistory.some(x=>!x.builtin&&x.kind==="Creative"&&x.brand===selectedBrand);
     if(builtinBrand && selectedBrand===builtinBrand&&!hasRealImport) return dashboardData.creative.campaigns;
     const base = selectedBrand==="all" && builtinBrand ? dashboardData.creative.campaigns.map(x=>({...x})) : [];
-    const grouped=new Map(base.map(x=>[x.name,x]));
-    brandCreative.filter(x=>Boolean(x.brand)).forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,orders:0,clicks:0,impressions:0,creatives:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.clicks+=row.clicks;item.impressions+=row.impressions;item.creatives+=1;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});
+    const grouped=new Map(base.map(x=>[campaignKey(x.name),x]));
+    brandCreative.filter(x=>Boolean(x.brand)).forEach(row=>{const key=campaignKey(row.campaign);const item=grouped.get(key)??{name:row.campaign,cost:0,revenue:0,orders:0,clicks:0,impressions:0,creatives:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.clicks+=row.clicks;item.impressions+=row.impressions;item.creatives+=1;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(key,item)});
     return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue);
   },[brandCreative,selectedBrand,importHistory]);
   const creativeSummary = creativeRows.reduce((acc, item) => ({ cost: acc.cost + item.cost, revenue: acc.revenue + item.revenue, orders: acc.orders + item.orders, clicks: acc.clicks + item.clicks, impressions: acc.impressions + item.impressions }), { cost: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 });
   const creativeRoi = creativeSummary.cost ? creativeSummary.revenue / creativeSummary.cost : 0;
-  const filteredCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;orders:number;roi:number}>();creativeRows.forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,orders:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[creativeRows]);
+  const filteredCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;orders:number;roi:number}>();creativeBaseRows.forEach(row=>{const key=campaignKey(row.campaign);const item=grouped.get(key)??{name:row.campaign,cost:0,revenue:0,orders:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(key,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[creativeBaseRows]);
   const creativeDeliveryStatuses = useMemo(()=>{const grouped=new Map<string,number>();creativeRows.forEach(row=>grouped.set(row.status,(grouped.get(row.status)??0)+1));return [...grouped].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count)},[creativeRows]);
   const creativeTiers = creativeRows.reduce((acc, row) => { const tier = creativeTier(row.roi); acc[tier] += 1; return acc; }, { great: 0, good: 0, mid: 0, bad: 0 });
   const creativeTop5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>b.revenue-a.revenue).slice(0,5),[creativeRows]);
@@ -312,10 +314,10 @@ export default function Home() {
     return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
   }, [filteredLiveSessions, liveFrom, liveTo]);
   const overviewCreativeRows = useMemo(() => brandCreative
-    .filter((row) => overviewCampaign === "all" || row.campaign === overviewCampaign)
+    .filter((row) => overviewCampaign === "all" || campaignKey(row.campaign) === campaignKey(overviewCampaign))
     .filter((row) => creativeRowInRange(row,overviewFrom,overviewTo)), [brandCreative, overviewCampaign, overviewFrom, overviewTo]);
   const overviewVideos = useMemo(() => overviewCreativeRows.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0), [overviewCreativeRows]);
-  const overviewCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewCreativeRows.forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[overviewCreativeRows]);
+  const overviewCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewCreativeRows.forEach(row=>{const key=campaignKey(row.campaign);const item=grouped.get(key)??{name:row.campaign,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(key,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[overviewCreativeRows]);
   const topVideos = useMemo(() => [...overviewVideos].sort((a,b) => b.revenue-a.revenue).slice(0,10), [overviewVideos]);
   const roasDistribution = useMemo(()=>{
     const bins=[{label:"0–1",min:0,max:1,color:"#e55353",count:0},{label:"1–2",min:1,max:2,color:"#ef7d32",count:0},{label:"2–3",min:2,max:3,color:"#f0a534",count:0},{label:"3–4",min:3,max:4,color:"#e8b331",count:0},{label:"4–5",min:4,max:5,color:"#91c83e",count:0},{label:"5+",min:5,max:Infinity,color:"#4fb486",count:0}];
@@ -389,7 +391,7 @@ export default function Home() {
         </div>
       </section>
       <section className="two-col">
-        <article className="panel"><div className="panel-head"><div><span>CREATIVE CAMPAIGNS</span><h2>Revenue leaders · terfilter</h2></div><button onClick={() => setTab("creative")}>Explore →</button></div><Bars items={overviewCreativeCampaigns} /></article>
+        <article className="panel"><div className="panel-head"><div><span>CREATIVE CAMPAIGNS</span><h2>Revenue leaders · terfilter</h2></div><button onClick={() => setTab("creative")}>Explore →</button></div><Bars items={overviewCreativeCampaigns} onSelect={(name)=>{setCampaign(name);setTab("creative")}} /></article>
         <article className="panel"><div className="panel-head"><div><span>LIVE CAMPAIGNS</span><h2>Revenue leaders · terfilter</h2></div><button onClick={() => setTab("live")}>Explore →</button></div><Bars items={overviewLiveCampaigns} /></article>
       </section>
       <section className="panel top-video-panel"><div className="panel-head"><div><span>BEST VIDEO OVERVIEW</span><h2>Top 10 video berdasarkan GMV · ROI</h2></div><small>{topVideos.length} video</small></div><div className="top-video-grid">{topVideos.map((row,index)=><article key={`${row.videoId}-${row.campaignId}`} onClick={()=>setSelectedCreative(row)}><i>{String(index+1).padStart(2,"0")}</i><div><b>{title(row.title||row.videoId,48)}</b><span>{row.account} · {row.campaign}</span></div><strong className={`creative-tier ${creativeTier(row.roi)}`}>{roi(row.roi)}</strong><em>{money(row.revenue,true)}</em>{tiktokVideoUrl(row)&&<a href={tiktokVideoUrl(row)!} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Cek video ↗</a>}</article>)}</div></section>
@@ -425,9 +427,9 @@ export default function Home() {
         <article className="mid"><span>Sedang</span><strong>{number(creativeTiers.mid)}</strong><small>ROI 2–3,99x</small></article>
         <article className="bad"><span>Buruk</span><strong>{number(creativeTiers.bad)}</strong><small>ROI ≤ 2x</small></article>
       </section>
-      <section className="panel campaign-picker"><div className="panel-head"><div><span>CAMPAIGN OVERVIEW</span><h2>Campaign sesuai seluruh filter aktif</h2></div><button onClick={() => setCampaign("all")}>Semua campaign</button></div><div className="campaign-card-grid">{filteredCreativeCampaigns.map((item) => <button key={item.name} className={campaign === item.name ? "active" : ""} onClick={() => { setCampaign(item.name); setQuery(""); }}><span>{item.name}</span><strong>{money(item.revenue, true)}</strong><small>{number(creativeRows.filter(row=>row.campaign===item.name).length)} creative · ROI {roi(item.roi)}</small><i><b style={{ width: `${Math.max(2, item.revenue / Math.max(1, ...filteredCreativeCampaigns.map((entry) => entry.revenue)) * 100)}%` }} /></i></button>)}</div></section>
+      <section className="panel campaign-picker"><div className="panel-head"><div><span>CAMPAIGN OVERVIEW</span><h2>Campaign sesuai seluruh filter aktif</h2></div><button onClick={() => setCampaign("all")}>Semua campaign</button></div><div className="campaign-card-grid">{filteredCreativeCampaigns.map((item) => <button key={item.name} className={campaignKey(campaign) === campaignKey(item.name) ? "active" : ""} onClick={() => { setCampaign(item.name); setQuery(""); }}><span>{item.name}</span><strong>{money(item.revenue, true)}</strong><small>{number(creativeBaseRows.filter(row=>campaignKey(row.campaign)===campaignKey(item.name)).length)} creative · ROI {roi(item.roi)}</small><i><b style={{ width: `${Math.max(2, item.revenue / Math.max(1, ...filteredCreativeCampaigns.map((entry) => entry.revenue)) * 100)}%` }} /></i></button>)}</div></section>
       <section className="two-col creative-panels">
-        <article className="panel"><div className="panel-head"><div><span>CAMPAIGN MIX</span><h2>Revenue by campaign · terfilter</h2></div></div><Bars items={filteredCreativeCampaigns.filter((item) => item.cost > 0)} /></article>
+        <article className="panel"><div className="panel-head"><div><span>CAMPAIGN MIX</span><h2>Revenue by campaign · terfilter</h2></div></div><Bars items={filteredCreativeCampaigns.filter((item) => item.cost > 0)} onSelect={(name)=>setCampaign(name)} /></article>
         <article className="panel compact"><div className="panel-head"><div><span>CAMPAIGN DELIVERY</span><h2>Delivery status dan komposisi</h2></div></div><div className="status-list">{creativeDeliveryStatuses.map((item) => <div key={item.name}><span><i className={item.name === "Delivering" ? "green" : ""} />{item.name}</span><b>{number(item.count)}</b></div>)}</div></article>
       </section>
       <section className="creative-performance-picks">{([["TOP 5 VIDEO","Performa terbaik berdasarkan GMV",creativeTop5,"great"],["5 BAD VIDEO PERFORMANCE","Prioritas evaluasi berdasarkan ROI",creativeBad5,"bad"]] as const).map(([eyebrow,heading,rows,tone])=><article className={`panel performance-pick ${tone}`} key={eyebrow}><div className="panel-head"><div><span>{eyebrow}</span><h2>{heading}</h2></div></div>{rows.map((row,i)=><button key={`${row.videoId}-${i}`} onClick={()=>setSelectedCreative(row)}><b>{i+1}</b><span><strong>{title(row.title||row.videoId,45)}</strong><small>{row.account} · {row.campaign}</small></span><em>{money(row.revenue,true)}<small>{roi(row.roi)}</small></em></button>)}</article>)}</section>
