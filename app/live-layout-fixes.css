@@ -1,0 +1,27 @@
+/* Keep long live charts and leaderboards inside their own cards. */
+.live-charts > .panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.daily-combo {
+  padding-bottom: 22px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.daily-combo > div {
+  flex: 1 0 26px;
+  min-width: 26px;
+}
+
+.host-bars {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.host-bars button {
+  width: 100%;
+  min-width: 0;
+}

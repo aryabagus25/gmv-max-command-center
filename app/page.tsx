@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import dashboardData from "./dashboard-data.json";
+import "./live-layout-fixes.css";
 
 type Tab = "overview" | "creative" | "live";
 type SortKey = "videoId" | "account" | "campaign" | "cost" | "revenue" | "roi" | "orders" | "cpo" | "ctr";
@@ -28,7 +29,17 @@ const periodInRange = (period:string|undefined, from:string, to:string) => {
   const last=new Date(Number(period.slice(0,4)),Number(period.slice(5,7)),0).toISOString().slice(0,10);
   return (!from||last>=from)&&(!to||first<=to);
 };
-const cleanHostLabel = (value: string) => value.replace(/[_]+/g, " ").replace(/\b\d+\s*[-–]\s*\d+\s*(pagi|siang|sore|malam)?\b/gi," ").replace(/\b\d+(?:[.:]\d+)?\s*(pagi|siang|sore|malam)\b/gi," ").replace(/\b(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des)\b/gi," ").replace(/\b\d{1,4}\b/g," ").replace(/\b(live|campaign|host|official|shop|store|pagi|siang|sore|malam)\b/gi, " ").replace(/[\s-]+/g, " ").trim();
+const HOST_MONTHS = "januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des";
+const cleanHostLabel = (value: string) => value
+  .replace(/[_]+/g, " ")
+  .replace(new RegExp(`\\b\\d{1,2}\\s*(?:${HOST_MONTHS})\\b`, "gi"), " ")
+  .replace(/\b\d+\s*[-–]\s*\d+\s*(pagi|siang|sore|malam)?\b/gi," ")
+  .replace(/\b\d+(?:[.:]\d+)?\s*(pagi|siang|sore|malam)\b/gi," ")
+  .replace(new RegExp(`\\b(?:${HOST_MONTHS})\\b`, "gi"), " ")
+  .replace(/\b\d{1,4}\b/g," ")
+  .replace(/\b(live|campaign|host|beauty|official|shop|store|pagi|siang|sore|malam)\b/gi, " ")
+  .replace(/[\s-]+/g, " ")
+  .trim();
 const displayHostLabel = (value:string) => cleanHostLabel(value).split(" ").map(word=>word.length<=3&&word===word.toUpperCase()?word:word.charAt(0).toUpperCase()+word.slice(1).toLowerCase()).join(" ")||"Tanpa Host";
 const hostEntityKey = (value: string) => {
   const cleaned = cleanHostLabel(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\b(beauty|official|shop|store)\b/g, " ").replace(/\s+/g, " ").trim();
