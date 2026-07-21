@@ -9,8 +9,13 @@ type SortKey = "videoId" | "account" | "campaign" | "cost" | "revenue" | "roi" |
 type LiveSortKey = "host" | "sessions" | "launchedAt" | "campaign" | "slot" | "cost" | "revenue" | "roi" | "orders" | "cpo" | "views";
 type LiveView = "leader" | "detail";
 type ImportKind = "Creative"|"Livestream";
-type CreativeRow = (typeof dashboardData.creative.creatives)[number] & { brand?: string; importId?: string; period?: string };
-type LiveRow = (typeof dashboardData.live.sessions)[number] & { brand?: string; importId?: string; durationMinutes?: number; period?: string };
+type CreativeRow = {
+  brand?: string; importId?: string; period?: string; campaign: string; campaignId: string; productId: string; type: string; title: string; videoId: string; account: string; postedAt: string; status: string; authorization: string; cost: number; revenue: number; orders: number; impressions: number; clicks: number; ctr: number; cvr: number; view2: number; view6: number; view25: number; view50: number; view75: number; view100: number; roi: number;
+};
+type LiveRow = {
+  brand?: string; importId?: string; period?: string; durationMinutes?: number; name: string; launchedAt: string; day: string; campaign: string; campaignId: string; status: string; cost: number; revenue: number; orders: number; views: number; tenSecondViews: number; follows: number; roi: number;
+};
+type CreativeCampaign = { name: string; cost: number; revenue: number; orders: number; clicks: number; impressions: number; creatives: number; roi: number };
 type ImportRecord = { id:string; brand:string; file:string; kind:ImportKind; period:string; rows:number; importedAt:string; builtin?:boolean };
 const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
@@ -99,7 +104,7 @@ const aggregateLiveHosts = (rows: LiveSessionWithHost[]) => {
   return [...grouped.values()].map((item) => ({ ...item, roi: item.cost ? item.revenue / item.cost : 0 }));
 };
 const liveSlot = (launchedAt: string) => { const hour = Number(launchedAt.slice(11, 13)); return hour < 10 ? "pagi" : hour < 14 ? "siang" : hour < 18 ? "sore" : "malam"; };
-const liveDates = dashboardData.live.sessions.map((row) => row.day).filter(Boolean).sort();
+const liveDates = (dashboardData.live.sessions as LiveRow[]).map((row) => row.day).filter(Boolean).sort();
 const LIVE_MIN = liveDates[0] || "2026-02-01";
 const LIVE_MAX = liveDates[liveDates.length - 1] || "2026-02-28";
 const roiTone = (value: number) => value >= 10 ? "roi-good" : value >= 4 ? "roi-mid" : value > 0 ? "roi-bad" : "roi-none";
@@ -158,8 +163,8 @@ function DateRangeFilter({from,to,onChange,min="2026-01-01",max="2026-12-31",lab
 function DataHealth() {
   return <section className="health-strip">
     <div><span className="pulse" /> <b>Data quality check</b></div>
-    <p><b>Creative export mencapai batas 100.000 baris.</b> Angka creative adalah minimum yang terukur, bukan jaminan total lengkap. Livestream lengkap: 194 sesi.</p>
-    <span className="status-pill">Perlu export terpisah per campaign</span>
+    <p><b>Dashboard siap diisi data real.</b> Upload data creative dan livestream per bulan agar angka filter tetap konsisten dengan export TikTok.</p>
+    <span className="status-pill">Data dummy dinonaktifkan</span>
   </section>;
 }
 
@@ -182,8 +187,8 @@ export default function Home() {
   const [selectedHost, setSelectedHost] = useState<string | null>(null);
   const [liveSort, setLiveSort] = useState<LiveSortKey>("revenue");
   const [liveSortDesc, setLiveSortDesc] = useState(true);
-  const [creativeSource, setCreativeSource] = useState<CreativeRow[]>(dashboardData.creative.creatives);
-  const [liveSource, setLiveSource] = useState<LiveRow[]>(dashboardData.live.sessions);
+  const [creativeSource, setCreativeSource] = useState<CreativeRow[]>(dashboardData.creative.creatives as CreativeRow[]);
+  const [liveSource, setLiveSource] = useState<LiveRow[]>(dashboardData.live.sessions as LiveRow[]);
   const [importOpen, setImportOpen] = useState(false);
   const [importMessage, setImportMessage] = useState("Data Februari bawaan sedang aktif.");
   const [importPeriod, setImportPeriod] = useState("2026-02");
@@ -193,16 +198,13 @@ export default function Home() {
   const [overviewFrom, setOverviewFrom] = useState("2026-02-01");
   const [overviewTo, setOverviewTo] = useState("2026-02-28");
   const [videoIdFilter, setVideoIdFilter] = useState("");
-  const [brandName, setBrandName] = useState("Brand Februari");
+  const [brandName, setBrandName] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
-  const [brandRecords, setBrandRecords] = useState(["Brand Februari"]);
+  const [brandRecords, setBrandRecords] = useState<string[]>([]);
   const [brandModalOpen, setBrandModalOpen] = useState(false);
   const [editingBrand, setEditingBrand] = useState<string|null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [importHistory, setImportHistory] = useState<ImportRecord[]>([
-    {id:"builtin-creative-feb26",brand:"Brand Februari",file:"Creative Februari 2026.xlsx",kind:"Creative",period:"2026-02",rows:100000,importedAt:"Data bawaan",builtin:true},
-    {id:"builtin-live-feb26",brand:"Brand Februari",file:"Livestream Februari 2026.xlsx",kind:"Livestream",period:"2026-02",rows:194,importedAt:"Data bawaan",builtin:true}
-  ]);
+  const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const importExcel = async (file: File) => {
@@ -273,8 +275,8 @@ export default function Home() {
   const creativeCampaigns = useMemo(()=>{
     const builtinBrand=importHistory.find(x=>x.id==="builtin-creative-feb26")?.brand;
     const hasRealImport=selectedBrand!=="all"&&importHistory.some(x=>!x.builtin&&x.kind==="Creative"&&x.brand===selectedBrand);
-    if(builtinBrand && selectedBrand===builtinBrand&&!hasRealImport) return dashboardData.creative.campaigns;
-    const base = selectedBrand==="all" && builtinBrand ? dashboardData.creative.campaigns.map(x=>({...x})) : [];
+    if(builtinBrand && selectedBrand===builtinBrand&&!hasRealImport) return dashboardData.creative.campaigns as CreativeCampaign[];
+    const base: CreativeCampaign[] = selectedBrand==="all" && builtinBrand ? (dashboardData.creative.campaigns as CreativeCampaign[]).map(x=>({...x})) : [];
     const grouped=new Map(base.map(x=>[campaignKey(x.name),x]));
     brandCreative.filter(x=>Boolean(x.brand)).forEach(row=>{const key=campaignKey(row.campaign);const item=grouped.get(key)??{name:row.campaign,cost:0,revenue:0,orders:0,clicks:0,impressions:0,creatives:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.orders+=row.orders;item.clicks+=row.clicks;item.impressions+=row.impressions;item.creatives+=1;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(key,item)});
     return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue);
@@ -286,7 +288,6 @@ export default function Home() {
   const creativeTiers = creativeRows.reduce((acc, row) => { const tier = creativeTier(row.roi); acc[tier] += 1; return acc; }, { great: 0, good: 0, mid: 0, bad: 0 });
   const creativeTop5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>b.revenue-a.revenue).slice(0,5),[creativeRows]);
   const creativeBad5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>a.roi-b.roi||b.cost-a.cost).slice(0,5),[creativeRows]);
-  const live = dashboardData.live.summary;
   const hostLabels = useMemo(() => buildHostLabelMap(brandLive), [brandLive]);
   const filteredLiveSessions = useMemo(() => withHostInfo(brandLive, hostLabels)
     .filter((row) => row.day >= liveFrom && row.day <= liveTo)
@@ -371,7 +372,7 @@ export default function Home() {
     </header>
 
     <nav className="tabs" aria-label="Dashboard views">
-      {(["overview", "creative", "live"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "active" : ""}>{item === "overview" ? "Overview" : item === "creative" ? "Creative Video" : "Livestream"}<span>{item === "creative" ? "100K" : item === "live" ? "194" : ""}</span></button>)}
+      {(["overview", "creative", "live"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "active" : ""}>{item === "overview" ? "Overview" : item === "creative" ? "Creative Video" : "Livestream"}<span>{item === "creative" ? number(brandCreative.length) : item === "live" ? number(brandLive.length) : ""}</span></button>)}
     </nav>
 
     {!activeBrandEmpty && <DataHealth />}
@@ -398,8 +399,8 @@ export default function Home() {
       <section className="panel roas-panel"><div className="panel-head"><div><span>VIDEO PORTFOLIO</span><h2>ROAS Distribution</h2><p>{number(overviewVideos.length)} video detail tersedia</p></div></div><div className="roas-stack">{roasDistribution.map(bin=><i key={bin.label} style={{width:`${bin.count/Math.max(1,overviewVideos.length)*100}%`,background:bin.color}} title={`${bin.label}x · ${number(bin.count)} video`}>{bin.count>=Math.max(1,overviewVideos.length*.08)?number(bin.count):""}</i>)}</div><div className="roas-legend">{roasDistribution.map(bin=><span key={bin.label}><i style={{background:bin.color}}/>{bin.label}x <b>{number(bin.count)}</b></span>)}</div></section>
       <section className="video-bucket-grid">{([["Top bagus",videoBuckets.best,"great"],["Top sedang",videoBuckets.mid,"mid"],["Buruk terburuk",videoBuckets.worst,"bad"]] as const).map(([label,rows,tone])=><article className={`panel bucket ${tone}`} key={label}><div className="panel-head"><div><span>VIDEO CHECK</span><h2>{label}</h2></div></div>{rows.map((row,i)=><div className="bucket-row" key={`${row.videoId}-${i}`}><b>{i+1}.</b><button onClick={()=>setSelectedCreative(row)}><strong>{title(row.title||row.videoId,42)}</strong><span>{roi(row.roi)} · {money(row.revenue)}</span></button>{tiktokVideoUrl(row)&&<a href={tiktokVideoUrl(row)!} target="_blank" rel="noreferrer">Cek video</a>}</div>)}</article>)}</section>
       <section className="insight-grid">
-        <article><span className="insight-no">01</span><div><b>Creative concentration tinggi</b><p>Serum Copper 1 menyumbang {pct(dashboardData.creative.campaigns[0].revenue / dashboardData.creative.summary.revenue)} creative GMV. Pisahkan export per campaign untuk memastikan campaign kecil tidak terpotong limit.</p></div></article>
-        <article><span className="insight-no">02</span><div><b>Live paling efisien</b><p>{dashboardData.live.campaigns[0].name} menghasilkan ROI {roi(dashboardData.live.campaigns[0].roi)}—tertinggi di antara campaign live Februari.</p></div></article>
+        <article><span className="insight-no">01</span><div><b>Creative concentration</b><p>{overviewCreativeCampaigns[0] ? `${overviewCreativeCampaigns[0].name} menyumbang ${pct(overviewCreativeCampaigns[0].revenue / Math.max(1, overviewCreative.revenue))} creative GMV pada filter aktif.` : "Belum ada data creative. Import file creative per bulan untuk mulai membaca kontribusi campaign."}</p></div></article>
+        <article><span className="insight-no">02</span><div><b>Live paling efisien</b><p>{overviewLiveCampaigns[0] ? `${overviewLiveCampaigns[0].name} menghasilkan ROI ${roi(overviewLiveCampaigns[0].roi)} pada filter aktif.` : "Belum ada data live. Import file livestream per bulan agar leaderboard live bisa dihitung."}</p></div></article>
         <article><span className="insight-no">03</span><div><b>Jangan gabungkan timeline</b><p>Waktu posting video bukan tanggal spend. Trend harian hanya dipakai untuk livestream karena setiap sesi punya launched time.</p></div></article>
       </section>
     </>}
