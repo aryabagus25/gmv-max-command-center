@@ -20,7 +20,8 @@ const number = (n: number) => Math.round(n).toLocaleString("id-ID");
 const pct = (n: number) => `${(n * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
 const roi = (n: number) => `${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}x`;
 const title = (value: string, max = 58) => value.length > max ? `${value.slice(0, max)}…` : value;
-const cleanHostLabel = (value: string) => value.replace(/[_-]+/g, " ").replace(/\b(live|campaign|host|official|shop|store)\b/gi, " ").replace(/\s+/g, " ").trim();
+const cleanHostLabel = (value: string) => value.replace(/[_]+/g, " ").replace(/\b\d+\s*[-–]\s*\d+\s*(pagi|siang|sore|malam)?\b/gi," ").replace(/\b\d+(?:[.:]\d+)?\s*(pagi|siang|sore|malam)\b/gi," ").replace(/\b(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des)\b/gi," ").replace(/\b\d{1,4}\b/g," ").replace(/\b(live|campaign|host|official|shop|store|pagi|siang|sore|malam)\b/gi, " ").replace(/[\s-]+/g, " ").trim();
+const displayHostLabel = (value:string) => cleanHostLabel(value).split(" ").map(word=>word.length<=3&&word===word.toUpperCase()?word:word.charAt(0).toUpperCase()+word.slice(1).toLowerCase()).join(" ")||"Tanpa Host";
 const hostEntityKey = (value: string) => {
   const cleaned = cleanHostLabel(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\b(beauty|official|shop|store)\b/g, " ").replace(/\s+/g, " ").trim();
   const first = cleaned.split(" ")[0] || "tanpa-host";
@@ -162,12 +163,12 @@ export default function Home() {
     const labels = new Map<string, Map<string, number>>();
     brandLive.forEach((row) => {
       const key = hostEntityKey(row.campaign);
-      const label = cleanHostLabel(row.campaign);
+      const label = displayHostLabel(row.campaign);
       const variants = labels.get(key) ?? new Map<string, number>();
       variants.set(label, (variants.get(label) ?? 0) + 1);
       labels.set(key, variants);
     });
-    return new Map([...labels].map(([key, variants]) => [key, [...variants].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0][0]]));
+    return new Map([...labels].map(([key, variants]) => [key, [...variants].sort((a, b) => b[0].length - a[0].length || b[1] - a[1])[0][0]]));
   }, [brandLive]);
   const filteredLiveSessions = useMemo(() => brandLive
     .map((row) => ({ ...row, hostKey: hostEntityKey(row.campaign), host: hostLabels.get(hostEntityKey(row.campaign)) || cleanHostLabel(row.campaign), slot: liveSlot(row.launchedAt) }))
@@ -192,11 +193,13 @@ export default function Home() {
   }), [filteredLiveSessions, selectedHost, liveSort, liveSortDesc]);
   const liveAgg = filteredLiveSessions.reduce((acc, row) => ({ cost: acc.cost + row.cost, revenue: acc.revenue + row.revenue, orders: acc.orders + row.orders, views: acc.views + row.views, durationMinutes:acc.durationMinutes+(row.durationMinutes||0), durationRows:acc.durationRows+(row.durationMinutes?1:0) }), { cost: 0, revenue: 0, orders: 0, views: 0, durationMinutes:0, durationRows:0 });
   const filteredLiveRoi = liveAgg.cost ? liveAgg.revenue / liveAgg.cost : 0;
-  const filteredDaily = useMemo(() => {
-    const days = new Map<string, { day: string; cost: number; revenue: number }>();
-    filteredLiveSessions.forEach((row) => { const item = days.get(row.day) ?? { day: row.day, cost: 0, revenue: 0 }; item.cost += row.cost; item.revenue += row.revenue; days.set(row.day, item); });
-    return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
-  }, [filteredLiveSessions]);
+  const filteredTimeline = useMemo(() => {
+    const span=(new Date(liveTo).getTime()-new Date(liveFrom).getTime())/86400000;
+    const monthly=span>75;
+    const groups = new Map<string, { key: string; label:string; cost: number; revenue: number }>();
+    filteredLiveSessions.forEach((row) => { const key=monthly?row.day.slice(0,7):row.day;const label=monthly?new Date(`${key}-01T00:00:00`).toLocaleDateString("id-ID",{month:"short",year:"2-digit"}):new Date(`${key}T00:00:00`).toLocaleDateString("id-ID",{day:"2-digit",month:"short"});const item = groups.get(key) ?? { key,label,cost: 0, revenue: 0 }; item.cost += row.cost; item.revenue += row.revenue; groups.set(key, item); });
+    return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+  }, [filteredLiveSessions, liveFrom, liveTo]);
   const overviewCreativeRows = useMemo(() => brandCreative
     .filter((row) => overviewCampaign === "all" || row.campaign === overviewCampaign)
     .filter((row) => !overviewFrom || (row.postedAt !== "-" && row.postedAt.slice(0,10) >= overviewFrom))
@@ -345,7 +348,7 @@ export default function Home() {
         <Kpi label="Live sessions" value={number(filteredLiveSessions.length)} note={`${number(liveLeaders.length)} host aktif`} />
       </section>
       <section className="two-col live-charts">
-        <article className="panel"><div className="panel-head"><div><span>DAILY PULSE</span><h2>Cost vs gross revenue</h2></div><div className="chart-legend"><i className="cost" />Cost <i />GMV</div></div><div className="daily-combo">{filteredDaily.map((day) => { const max = Math.max(1, ...filteredDaily.map((item) => item.revenue)); return <div key={day.day} title={`${day.day} · GMV ${money(day.revenue)} · Cost ${money(day.cost)}`}><span className="gmv-bar" style={{ height: `${Math.max(2, day.revenue / max * 100)}%` }} /><span className="cost-mark" style={{ bottom: `${Math.max(1, day.cost / max * 100)}%` }} /><small>{day.day.slice(8)}</small></div> })}</div></article>
+        <article className="panel"><div className="panel-head"><div><span>PERFORMANCE PULSE</span><h2>Cost vs gross revenue</h2></div><div className="chart-legend"><i className="cost" />Cost <i />GMV</div></div><div className="daily-combo">{filteredTimeline.map((period) => { const max = Math.max(1, ...filteredTimeline.map((item) => item.revenue)); return <div key={period.key} title={`${period.label} · GMV ${money(period.revenue)} · Cost ${money(period.cost)}`}><span className="gmv-bar" style={{ height: `${Math.max(3, period.revenue / max * 100)}%` }} /><span className="cost-mark" style={{ bottom: `${Math.max(1, period.cost / max * 100)}%` }} /><small>{period.label}</small></div> })}</div></article>
         <article className="panel"><div className="panel-head"><div><span>TOP HOST BY GMV</span><h2>Leaderboard terfilter</h2></div><small>klik untuk detail</small></div><div className="host-bars">{liveLeaders.slice(0, 10).map((item, index) => { const max = Math.max(1, ...liveLeaders.map((host) => host.revenue)); return <button key={item.key} onClick={() => openHost(item.key)}><span>{index + 1}. {item.host}</span><i><b style={{ width: `${Math.max(2, item.revenue / max * 100)}%` }} /></i><strong>{money(item.revenue, true)}</strong></button> })}</div></article>
       </section>
       <section className="panel heatmap-panel"><div className="panel-head"><div><span>LIVE TIME HEATMAP</span><h2>Jam live paling produktif</h2><p>Warna = GMV, angka = ROI. Mengikuti seluruh filter live di atas.</p></div><div className="best-hours">{heatmap.best.map(x=><span key={x.hour}><b>{String(x.hour).padStart(2,"0")}:00</b>{money(x.revenue,true)} · {roi(x.roi)}</span>)}</div></div><div className="heatmap"><div className="heat-corner">Hari</div>{Array.from({length:24},(_,h)=><div className="heat-hour" key={h}>{String(h).padStart(2,"0")}</div>)}{["Sen","Sel","Rab","Kam","Jum","Sab","Min"].map((day,d)=><div className="heat-row" key={day}><b>{day}</b>{Array.from({length:24},(_,h)=>{const cell=heatmap.cells.find(x=>x.day===d&&x.hour===h);const intensity=cell?cell.revenue/heatmap.max:0;return <i key={h} style={{background:cell?`rgba(40,230,214,${.08+intensity*.82})`:undefined}} title={cell?`${day} ${String(h).padStart(2,"0")}:00 · ${cell.sessions} sesi · GMV ${money(cell.revenue)} · ROI ${roi(cell.cost?cell.revenue/cell.cost:0)}`:"Tidak ada sesi"}>{cell&&cell.cost?roi(cell.revenue/cell.cost).replace("x",""):""}</i>})}</div>)}</div></section>
