@@ -64,6 +64,29 @@ function Bars({ items, metric = "revenue" }: { items: Array<{ name: string; reve
   </div>;
 }
 
+function DateRangeFilter({from,to,onChange,min="2026-01-01",max="2026-12-31",label="Periode"}:{from:string;to:string;onChange:(from:string,to:string)=>void;min?:string;max?:string;label?:string}){
+  const [open,setOpen]=useState(false);
+  const minDay=Math.floor(new Date(`${min}T00:00:00`).getTime()/86400000);
+  const maxDay=Math.floor(new Date(`${max}T00:00:00`).getTime()/86400000);
+  const fromDay=Math.floor(new Date(`${from||min}T00:00:00`).getTime()/86400000);
+  const toDay=Math.floor(new Date(`${to||max}T00:00:00`).getTime()/86400000);
+  const iso=(day:number)=>new Date(day*86400000).toISOString().slice(0,10);
+  const period=from&&to&&from.slice(0,7)===to.slice(0,7)&&from.endsWith("-01")?from.slice(0,7):"custom";
+  const selectPeriod=(value:string)=>{
+    if(value==="all") return onChange(min,max);
+    if(value==="custom") return;
+    const start=`${value}-01`;const end=new Date(Number(value.slice(0,4)),Number(value.slice(5,7)),0).toISOString().slice(0,10);onChange(start,end);
+  };
+  const presets=[
+    ["7 hari",7],["30 hari",30],["3 bulan",90],["6 bulan",180],["12 bulan",365]
+  ] as const;
+  return <div className="range-filter">
+    <span>{label}</span>
+    <div className="range-filter-row"><select value={period} onChange={e=>selectPeriod(e.target.value)}><option value="all">Semua periode</option>{Array.from({length:12},(_,i)=>{const value=`2026-${String(i+1).padStart(2,"0")}`;return <option value={value} key={value}>{monthLabel(value)}</option>})}<option value="custom">Custom</option></select><button type="button" onClick={()=>setOpen(!open)}>◫ {from} — {to}</button></div>
+    {open&&<div className="range-popover"><div className="range-presets"><button onClick={()=>onChange(iso(maxDay),iso(maxDay))}>Hari ini</button>{presets.map(([name,days])=><button key={name} onClick={()=>onChange(iso(Math.max(minDay,maxDay-days+1)),iso(maxDay))}>{name}</button>)}</div><div className="range-custom"><b>Geser untuk memilih rentang</b><div className="range-dates"><input type="date" value={from} min={min} max={to||max} onChange={e=>onChange(e.target.value,to)}/><span>—</span><input type="date" value={to} min={from||min} max={max} onChange={e=>onChange(from,e.target.value)}/></div><label>Mulai<input type="range" min={minDay} max={maxDay} value={Math.min(fromDay,toDay)} onChange={e=>onChange(iso(Math.min(Number(e.target.value),toDay)),to)}/></label><label>Sampai<input type="range" min={minDay} max={maxDay} value={Math.max(fromDay,toDay)} onChange={e=>onChange(from,iso(Math.max(Number(e.target.value),fromDay)))}/></label><div className="range-track-label"><span>{min}</span><strong>{from} — {to}</strong><span>{max}</span></div><button className="range-apply" onClick={()=>setOpen(false)}>Terapkan periode</button></div></div>}
+  </div>;
+}
+
 function DataHealth() {
   return <section className="health-strip">
     <div><span className="pulse" /> <b>Data quality check</b></div>
@@ -279,7 +302,7 @@ export default function Home() {
     {activeBrandEmpty && <section className="empty-brand"><div>□</div><h2>Belum ada data untuk {selectedBrand}</h2><p>Brand sudah dibuat. Import file creative atau livestream untuk mulai mengisi dashboard.</p><button onClick={()=>setImportOpen(true)}>Import data sekarang</button></section>}
 
     {!activeBrandEmpty && tab === "overview" && <>
-      <section className="overview-filter"><div><b>Filter overview</b><span>Brand aktif: {selectedBrand==="all"?"Semua brand":selectedBrand}</span></div><label>Dari tanggal<input type="date" value={overviewFrom} onChange={(e)=>setOverviewFrom(e.target.value)}/></label><label>Sampai<input type="date" value={overviewTo} onChange={(e)=>setOverviewTo(e.target.value)}/></label><label>Data<select value={overviewScope} onChange={(e)=>setOverviewScope(e.target.value as typeof overviewScope)}><option value="all">Creative + Live</option><option value="creative">Creative saja</option><option value="live">Live saja</option></select></label><label>Campaign<select value={overviewCampaign} onChange={(e)=>setOverviewCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map(x=><option key={x.name}>{x.name}</option>)}</select></label><button onClick={()=>{setOverviewScope("all");setOverviewCampaign("all");setOverviewFrom("2026-02-01");setOverviewTo("2026-02-28")}}>Reset</button></section>
+      <section className="overview-filter"><div><b>Filter overview</b><span>Brand aktif: {selectedBrand==="all"?"Semua brand":selectedBrand}</span></div><DateRangeFilter from={overviewFrom} to={overviewTo} onChange={(from,to)=>{setOverviewFrom(from);setOverviewTo(to)}}/><label>Data<select value={overviewScope} onChange={(e)=>setOverviewScope(e.target.value as typeof overviewScope)}><option value="all">Creative + Live</option><option value="creative">Creative saja</option><option value="live">Live saja</option></select></label><label>Campaign<select value={overviewCampaign} onChange={(e)=>setOverviewCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map(x=><option key={x.name}>{x.name}</option>)}</select></label><button onClick={()=>{setOverviewScope("all");setOverviewCampaign("all");setOverviewFrom("2026-01-01");setOverviewTo("2026-12-31")}}>Reset</button></section>
       <section className="hero-grid">
         <article className="score-card">
           <div className="eyebrow">BLENDED PERFORMANCE</div>
@@ -308,8 +331,7 @@ export default function Home() {
     {!activeBrandEmpty && tab === "creative" && <>
       <section className="section-heading"><div><span>CREATIVE VIDEO / PER CAMPAIGN</span><h2>Creative performance</h2><p>Satu baris = kombinasi campaign + product + video. Product card tetap dipisahkan dari video.</p></div><div className="snapshot">SNAPSHOT EXPORT <b>FEB 2026</b></div></section>
       <section className="controls">
-        <label>Dari tanggal posting<input type="date" value={creativeFrom} max={creativeTo||undefined} onChange={(e)=>setCreativeFrom(e.target.value)}/></label>
-        <label>Sampai<input type="date" value={creativeTo} min={creativeFrom||undefined} onChange={(e)=>setCreativeTo(e.target.value)}/></label>
+        <DateRangeFilter label="Periode laporan" from={creativeFrom||"2026-01-01"} to={creativeTo||"2026-12-31"} onChange={(from,to)=>{setCreativeFrom(from);setCreativeTo(to)}}/>
         <label>Campaign<select value={campaign} onChange={(e) => setCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
         <label>Cari creative<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Caption, account, video ID…" /></label>
         <label>Urutkan<select value={sort} onChange={(e) => {setSort(e.target.value as SortKey);setSortDesc(true)}}><option value="cost">Spend terbesar</option><option value="revenue">GMV terbesar</option><option value="roi">ROI terbesar</option><option value="orders">Order terbanyak</option><option value="ctr">CTR terbesar</option></select></label>
@@ -344,8 +366,7 @@ export default function Home() {
     {!activeBrandEmpty && tab === "live" && <>
       <section className="section-heading"><div><span>LIVESTREAM DATA</span><h2>Live host performance</h2><p>Nama campaign yang mirip otomatis digabung menjadi satu host. Klik host untuk membuka semua sesi campaign-nya.</p></div><div className="snapshot">{number(filteredLiveSessions.length)} SESSIONS <b>{number(liveLeaders.length)} HOSTS</b></div></section>
       <section className="live-filters" aria-label="Filter livestream">
-        <label>Dari tanggal<input type="date" value={liveFrom} min={liveBounds.min} max={liveTo||liveBounds.max} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveFrom(e.target.value)} /></label>
-        <label>Sampai<input type="date" value={liveTo} min={liveFrom||liveBounds.min} max={liveBounds.max} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveTo(e.target.value)} /></label>
+        <DateRangeFilter label="Periode live" from={liveFrom} to={liveTo} min={liveBounds.min} max={liveBounds.max} onChange={(from,to)=>{setLiveFrom(from);setLiveTo(to)}}/>
         <label>Host / akun<select value={liveHost} onChange={(e) => { setLiveHost(e.target.value); setSelectedHost(e.target.value === "all" ? null : e.target.value); }}><option value="all">Semua host</option>{[...hostLabels].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
         <fieldset><legend>Sesi</legend><div className="slot-chips">{["pagi", "siang", "sore", "malam"].map((slot) => <button key={slot} className={liveSlots.includes(slot) ? "on" : ""} onClick={() => setLiveSlots(liveSlots.includes(slot) ? liveSlots.filter((item) => item !== slot) : [...liveSlots, slot])}>{slot}</button>)}</div></fieldset>
         <label className="live-search">Cari campaign<input value={liveQuery} onChange={(e) => setLiveQuery(e.target.value)} placeholder="Nama live / campaign / ID…" /></label>
