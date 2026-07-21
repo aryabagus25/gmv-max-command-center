@@ -47,7 +47,7 @@ const creativeRowInRange = (row:CreativeRow, from:string, to:string) => {
 };
 const HOST_MONTHS = "januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des";
 const cleanHostLabel = (value: string) => value
-  .replace(/[_]+/g, " ")
+  .replace(/[._]+/g, " ")
   .replace(/\b\d+(?:[.:]\d+)?\s*wib\b/gi," ")
   .replace(/\bwib\b/gi," ")
   .replace(new RegExp(`\\b\\d{1,2}\\s*(?:${HOST_MONTHS})\\b`, "gi"), " ")
@@ -55,7 +55,7 @@ const cleanHostLabel = (value: string) => value
   .replace(/\b\d+(?:[.:]\d+)?\s*(pagi|siang|sore|malam)\b/gi," ")
   .replace(new RegExp(`\\b(?:${HOST_MONTHS})\\b`, "gi"), " ")
   .replace(/\b\d{1,4}\b/g," ")
-  .replace(/\b(live|campaign|host|beauty|official|shop|store|pagi|siang|sore|malam)\b/gi, " ")
+  .replace(/\b(live|campaign|host|beauty|official|shop|store|pagi|siang|sore|malam|jam|mej|aulia+a?)\b/gi, " ")
   .replace(/[\s-]+/g, " ")
   .trim();
 const displayHostLabel = (value:string) => cleanHostLabel(value).split(" ").map(word=>word.length<=3&&word===word.toUpperCase()?word:word.charAt(0).toUpperCase()+word.slice(1).toLowerCase()).join(" ")||"Tanpa Host";
@@ -63,6 +63,40 @@ const hostEntityKey = (value: string) => {
   const cleaned = cleanHostLabel(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\b(beauty|official|shop|store)\b/g, " ").replace(/\s+/g, " ").trim();
   const first = cleaned.split(" ")[0] || "tanpa-host";
   return first.replace(/(.)\1+/g, "$1");
+};
+type LiveSessionWithHost = LiveRow & { hostKey: string; host: string; slot: string };
+type LiveLeader = { key: string; host: string; sessions: number; cost: number; revenue: number; orders: number; views: number; follows: number; durationMinutes: number; durationRows: number; roi: number };
+const buildHostLabelMap = (rows: LiveRow[]) => {
+  const labels = new Map<string, Map<string, number>>();
+  rows.forEach((row) => {
+    const key = hostEntityKey(row.campaign);
+    const label = displayHostLabel(row.campaign);
+    const variants = labels.get(key) ?? new Map<string, number>();
+    variants.set(label, (variants.get(label) ?? 0) + 1);
+    labels.set(key, variants);
+  });
+  return new Map([...labels].map(([key, variants]) => {
+    const label = [...variants].sort((a, b) => {
+      const aw = a[0].split(/\s+/).length;
+      const bw = b[0].split(/\s+/).length;
+      return aw - bw || b[1] - a[1] || a[0].length - b[0].length;
+    })[0][0];
+    return [key, label];
+  }));
+};
+const withHostInfo = (rows: LiveRow[], labels: Map<string, string>): LiveSessionWithHost[] =>
+  rows.map((row) => {
+    const hostKey = hostEntityKey(row.campaign);
+    return { ...row, hostKey, host: labels.get(hostKey) || displayHostLabel(row.campaign), slot: liveSlot(row.launchedAt) };
+  });
+const aggregateLiveHosts = (rows: LiveSessionWithHost[]) => {
+  const grouped = new Map<string, LiveLeader>();
+  rows.forEach((row) => {
+    const item = grouped.get(row.hostKey) ?? { key: row.hostKey, host: row.host, sessions: 0, cost: 0, revenue: 0, orders: 0, views: 0, follows: 0, durationMinutes: 0, durationRows: 0, roi: 0 };
+    item.sessions += 1; item.cost += row.cost; item.revenue += row.revenue; item.orders += row.orders; item.views += row.views; item.follows += row.follows; item.durationMinutes += row.durationMinutes || 0; if (row.durationMinutes) item.durationRows += 1;
+    grouped.set(row.hostKey, item);
+  });
+  return [...grouped.values()].map((item) => ({ ...item, roi: item.cost ? item.revenue / item.cost : 0 }));
 };
 const liveSlot = (launchedAt: string) => { const hour = Number(launchedAt.slice(11, 13)); return hour < 10 ? "pagi" : hour < 14 ? "siang" : hour < 18 ? "sore" : "malam"; };
 const liveDates = dashboardData.live.sessions.map((row) => row.day).filter(Boolean).sort();
@@ -82,7 +116,7 @@ function Kpi({ label, value, note, tone = "default" }: { label: string; value: s
 }
 
 function Bars({ items, metric = "revenue" }: { items: Array<{ name: string; revenue: number; cost: number; roi: number }>; metric?: "revenue" | "roi" }) {
-  const shown = items.slice(0, 6);
+  const shown = items.slice(0, 5);
   const max = Math.max(1, ...shown.map((item) => item[metric]));
   return <div className="bars">
     {shown.map((item, index) => <div className="bar-row" key={item.name}>
@@ -251,31 +285,14 @@ export default function Home() {
   const creativeTop5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>b.revenue-a.revenue).slice(0,5),[creativeRows]);
   const creativeBad5 = useMemo(()=>[...creativeRows].filter(x=>x.type.toLowerCase()==="video").sort((a,b)=>a.roi-b.roi||b.cost-a.cost).slice(0,5),[creativeRows]);
   const live = dashboardData.live.summary;
-  const hostLabels = useMemo(() => {
-    const labels = new Map<string, Map<string, number>>();
-    brandLive.forEach((row) => {
-      const key = hostEntityKey(row.campaign);
-      const label = displayHostLabel(row.campaign);
-      const variants = labels.get(key) ?? new Map<string, number>();
-      variants.set(label, (variants.get(label) ?? 0) + 1);
-      labels.set(key, variants);
-    });
-    return new Map([...labels].map(([key, variants]) => [key, [...variants].sort((a, b) => b[0].length - a[0].length || b[1] - a[1])[0][0]]));
-  }, [brandLive]);
-  const filteredLiveSessions = useMemo(() => brandLive
-    .map((row) => ({ ...row, hostKey: hostEntityKey(row.campaign), host: hostLabels.get(hostEntityKey(row.campaign)) || cleanHostLabel(row.campaign), slot: liveSlot(row.launchedAt) }))
+  const hostLabels = useMemo(() => buildHostLabelMap(brandLive), [brandLive]);
+  const filteredLiveSessions = useMemo(() => withHostInfo(brandLive, hostLabels)
     .filter((row) => row.day >= liveFrom && row.day <= liveTo)
     .filter((row) => liveHost === "all" || row.hostKey === liveHost)
     .filter((row) => liveSlots.length === 0 || liveSlots.includes(row.slot))
     .filter((row) => `${row.name} ${row.campaign} ${row.campaignId} ${row.host}`.toLowerCase().includes(liveQuery.toLowerCase())), [brandLive, hostLabels, liveFrom, liveTo, liveHost, liveSlots, liveQuery]);
   const liveLeaders = useMemo(() => {
-    const grouped = new Map<string, { key: string; host: string; sessions: number; cost: number; revenue: number; orders: number; views: number; follows: number; durationMinutes: number; durationRows: number; roi: number }>();
-    filteredLiveSessions.forEach((row) => {
-      const item = grouped.get(row.hostKey) ?? { key: row.hostKey, host: row.host, sessions: 0, cost: 0, revenue: 0, orders: 0, views: 0, follows: 0, durationMinutes: 0, durationRows: 0, roi: 0 };
-      item.sessions += 1; item.cost += row.cost; item.revenue += row.revenue; item.orders += row.orders; item.views += row.views; item.follows += row.follows; item.durationMinutes += row.durationMinutes||0; if(row.durationMinutes) item.durationRows += 1;
-      grouped.set(row.hostKey, item);
-    });
-    return [...grouped.values()].map((item) => ({ ...item, roi: item.cost ? item.revenue / item.cost : 0 })).sort((a, b) => {
+    return aggregateLiveHosts(filteredLiveSessions).sort((a, b) => {
       const value=(item:typeof a):string|number=>liveSort==="host"?item.host:liveSort==="sessions"?item.sessions:liveSort==="cpo"?(item.orders?item.cost/item.orders:Number.MAX_SAFE_INTEGER):(["cost","revenue","roi","orders","views"].includes(liveSort)?item[liveSort as "cost"|"revenue"|"roi"|"orders"|"views"]:item.revenue);
       const av=value(a),bv=value(b);const result=typeof av==="string"?av.localeCompare(String(bv)):Number(av)-Number(bv);return liveSortDesc?-result:result;
     });
@@ -317,9 +334,9 @@ export default function Home() {
     return {cells:list,max,best:hours.slice(0,3)};
   },[filteredLiveSessions]);
   const overviewCreative = overviewCreativeRows.reduce((a,x)=>{a.cost+=x.cost;a.revenue+=x.revenue;a.orders+=x.orders;a.campaigns.add(x.campaign);return a},{cost:0,revenue:0,orders:0,campaigns:new Set<string>()});
-  const overviewLiveRows = brandLive.filter(x=>x.day>=overviewFrom&&x.day<=overviewTo);
+  const overviewLiveRows = useMemo(() => withHostInfo(brandLive, hostLabels).filter(x=>x.day>=overviewFrom&&x.day<=overviewTo), [brandLive, hostLabels, overviewFrom, overviewTo]);
   const overviewLive = overviewLiveRows.reduce((a,x)=>({cost:a.cost+x.cost,revenue:a.revenue+x.revenue,orders:a.orders+x.orders,rowCount:a.rowCount+1,views:a.views+x.views}),{cost:0,revenue:0,orders:0,rowCount:0,views:0});
-  const overviewLiveCampaigns = (()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewLiveRows.forEach(row=>{const name=cleanHostLabel(row.campaign);const item=grouped.get(name)??{name,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(name,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)})();
+  const overviewLiveCampaigns = useMemo(() => aggregateLiveHosts(overviewLiveRows).map(({ host, cost, revenue, roi }) => ({ name: host, cost, revenue, roi })).sort((a,b)=>b.revenue-a.revenue), [overviewLiveRows]);
   const overviewCost = (overviewScope !== "live" ? overviewCreative.cost : 0) + (overviewScope !== "creative" ? overviewLive.cost : 0);
   const overviewRevenue = (overviewScope !== "live" ? overviewCreative.revenue : 0) + (overviewScope !== "creative" ? overviewLive.revenue : 0);
   const overviewOrders = (overviewScope !== "live" ? overviewCreative.orders : 0) + (overviewScope !== "creative" ? overviewLive.orders : 0);
