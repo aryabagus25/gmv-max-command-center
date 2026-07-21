@@ -6,7 +6,7 @@ import "./live-layout-fixes.css";
 
 type Tab = "overview" | "creative" | "live";
 type SortKey = "videoId" | "account" | "campaign" | "cost" | "revenue" | "roi" | "orders" | "cpo" | "ctr";
-type LiveSortKey = "launchedAt" | "cost" | "revenue" | "roi" | "orders" | "views";
+type LiveSortKey = "host" | "sessions" | "launchedAt" | "campaign" | "slot" | "cost" | "revenue" | "roi" | "orders" | "cpo" | "views";
 type LiveView = "leader" | "detail";
 type ImportKind = "Creative"|"Livestream";
 type CreativeRow = (typeof dashboardData.creative.creatives)[number] & { brand?: string; importId?: string; period?: string };
@@ -29,9 +29,27 @@ const periodInRange = (period:string|undefined, from:string, to:string) => {
   const last=new Date(Number(period.slice(0,4)),Number(period.slice(5,7)),0).toISOString().slice(0,10);
   return (!from||last>=from)&&(!to||first<=to);
 };
+const normalizedPostedDate = (value:string|undefined) => {
+  const match=String(value||"").match(/(\d{4})[-/]([01]?\d)[-/]([0-3]?\d)/);
+  return match?`${match[1]}-${match[2].padStart(2,"0")}-${match[3].padStart(2,"0")}`:"";
+};
+const fullMonthSelected = (period:string|undefined, from:string, to:string) => {
+  const effectivePeriod=period||"2026-02";
+  if(!from||!to||from!==`${effectivePeriod}-01`) return false;
+  const last=new Date(Number(effectivePeriod.slice(0,4)),Number(effectivePeriod.slice(5,7)),0).toISOString().slice(0,10);
+  return to===last;
+};
+const creativeRowInRange = (row:CreativeRow, from:string, to:string) => {
+  if(!periodInRange(row.period,from,to)) return false;
+  if(fullMonthSelected(row.period,from,to)) return true;
+  const posted=normalizedPostedDate(row.postedAt);
+  return Boolean(posted)&&(!from||posted>=from)&&(!to||posted<=to);
+};
 const HOST_MONTHS = "januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des";
 const cleanHostLabel = (value: string) => value
   .replace(/[_]+/g, " ")
+  .replace(/\b\d+(?:[.:]\d+)?\s*wib\b/gi," ")
+  .replace(/\bwib\b/gi," ")
   .replace(new RegExp(`\\b\\d{1,2}\\s*(?:${HOST_MONTHS})\\b`, "gi"), " ")
   .replace(/\b\d+\s*[-–]\s*\d+\s*(pagi|siang|sore|malam)?\b/gi," ")
   .replace(/\b\d+(?:[.:]\d+)?\s*(pagi|siang|sore|malam)\b/gi," ")
@@ -211,7 +229,7 @@ export default function Home() {
   const liveBounds = useMemo(()=>{const days=brandLive.map(row=>row.day).filter(Boolean).sort();return {min:days[0]||LIVE_MIN,max:days[days.length-1]||LIVE_MAX}},[brandLive]);
   const creativeRows = useMemo(() => brandCreative
     .filter((row) => campaign === "all" || row.campaign === campaign)
-    .filter((row) => periodInRange(row.period,creativeFrom,creativeTo))
+    .filter((row) => creativeRowInRange(row,creativeFrom,creativeTo))
     .filter((row) => !onlySpend || row.cost > 0)
     .filter((row) => `${row.title} ${row.account} ${row.videoId}`.toLowerCase().includes(query.toLowerCase()))
     .filter((row) => row.videoId.toLowerCase().includes(videoIdFilter.toLowerCase()))
@@ -258,11 +276,13 @@ export default function Home() {
       grouped.set(row.hostKey, item);
     });
     return [...grouped.values()].map((item) => ({ ...item, roi: item.cost ? item.revenue / item.cost : 0 })).sort((a, b) => {
-      const av = a[liveSort === "launchedAt" ? "revenue" : liveSort]; const bv = b[liveSort === "launchedAt" ? "revenue" : liveSort]; return liveSortDesc ? bv - av : av - bv;
+      const value=(item:typeof a):string|number=>liveSort==="host"?item.host:liveSort==="sessions"?item.sessions:liveSort==="cpo"?(item.orders?item.cost/item.orders:Number.MAX_SAFE_INTEGER):(["cost","revenue","roi","orders","views"].includes(liveSort)?item[liveSort as "cost"|"revenue"|"roi"|"orders"|"views"]:item.revenue);
+      const av=value(a),bv=value(b);const result=typeof av==="string"?av.localeCompare(String(bv)):Number(av)-Number(bv);return liveSortDesc?-result:result;
     });
   }, [filteredLiveSessions, liveSort, liveSortDesc]);
   const liveDetailRows = useMemo(() => filteredLiveSessions.filter((row) => !selectedHost || row.hostKey === selectedHost).sort((a, b) => {
-    const av = liveSort === "launchedAt" ? a.launchedAt : a[liveSort]; const bv = liveSort === "launchedAt" ? b.launchedAt : b[liveSort];
+    const value=(row:typeof a):string|number=>liveSort==="launchedAt"?row.launchedAt:liveSort==="campaign"?row.name:liveSort==="slot"?row.slot:liveSort==="cpo"?(row.orders?row.cost/row.orders:Number.MAX_SAFE_INTEGER):(["cost","revenue","roi","orders","views"].includes(liveSort)?row[liveSort as "cost"|"revenue"|"roi"|"orders"|"views"]:row.launchedAt);
+    const av=value(a),bv=value(b);
     return liveSortDesc ? (bv > av ? 1 : bv < av ? -1 : 0) : (av > bv ? 1 : av < bv ? -1 : 0);
   }), [filteredLiveSessions, selectedHost, liveSort, liveSortDesc]);
   const liveAgg = filteredLiveSessions.reduce((acc, row) => ({ cost: acc.cost + row.cost, revenue: acc.revenue + row.revenue, orders: acc.orders + row.orders, views: acc.views + row.views, durationMinutes:acc.durationMinutes+(row.durationMinutes||0), durationRows:acc.durationRows+(row.durationMinutes?1:0) }), { cost: 0, revenue: 0, orders: 0, views: 0, durationMinutes:0, durationRows:0 });
@@ -276,7 +296,7 @@ export default function Home() {
   }, [filteredLiveSessions, liveFrom, liveTo]);
   const overviewCreativeRows = useMemo(() => brandCreative
     .filter((row) => overviewCampaign === "all" || row.campaign === overviewCampaign)
-    .filter((row) => periodInRange(row.period,overviewFrom,overviewTo)), [brandCreative, overviewCampaign, overviewFrom, overviewTo]);
+    .filter((row) => creativeRowInRange(row,overviewFrom,overviewTo)), [brandCreative, overviewCampaign, overviewFrom, overviewTo]);
   const overviewVideos = useMemo(() => overviewCreativeRows.filter((row) => row.type.toLowerCase() === "video" && row.cost > 0), [overviewCreativeRows]);
   const overviewCreativeCampaigns = useMemo(()=>{const grouped=new Map<string,{name:string;cost:number;revenue:number;roi:number}>();overviewCreativeRows.forEach(row=>{const item=grouped.get(row.campaign)??{name:row.campaign,cost:0,revenue:0,roi:0};item.cost+=row.cost;item.revenue+=row.revenue;item.roi=item.cost?item.revenue/item.cost:0;grouped.set(row.campaign,item)});return [...grouped.values()].sort((a,b)=>b.revenue-a.revenue)},[overviewCreativeRows]);
   const topVideos = useMemo(() => [...overviewVideos].sort((a,b) => b.revenue-a.revenue).slice(0,10), [overviewVideos]);
@@ -426,7 +446,7 @@ export default function Home() {
       <section className="panel live-table-panel">
         <div className="live-table-tabs"><button className={liveView === "leader" ? "active" : ""} onClick={() => { setLiveView("leader"); setSelectedHost(null); if (liveHost !== "all") setLiveHost("all"); }}>Leaderboard Host</button><button className={liveView === "detail" ? "active" : ""} onClick={() => setLiveView("detail")}>Detail Campaign</button><div className="roi-legend"><span><i className="good" />ROI ≥ 10</span><span><i className="mid" />ROI 4–9,99</span><span><i className="bad" />ROI &lt; 4</span></div></div>
         {liveView === "leader" ? <div className="table-wrap"><table className="live-table"><thead><tr><th>Host</th><th>Sesi</th><th><button onClick={() => setLiveSortKey("cost")}>Cost {liveSort === "cost" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("revenue")}>Gross revenue {liveSort === "revenue" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("roi")}>ROI {liveSort === "roi" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("orders")}>Orders {liveSort === "orders" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th>CPO</th><th><button onClick={() => setLiveSortKey("views")}>Views {liveSort === "views" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th></tr></thead><tbody>{liveLeaders.map((row) => <tr key={row.key} className="host-row" onClick={() => openHost(row.key)}><td><b>{row.host}</b><span>{row.key} · klik untuk detail ›</span></td><td>{number(row.sessions)}</td><td>{money(row.cost)}</td><td><div className="revenue-cell"><span>{money(row.revenue)}</span><i><b style={{ width: `${Math.max(2, row.revenue / Math.max(1, ...liveLeaders.map((item) => item.revenue)) * 100)}%` }} /></i></div></td><td><strong className={`roi-badge ${roiTone(row.roi)}`}>{roi(row.roi)}</strong></td><td>{number(row.orders)}</td><td>{row.orders ? money(row.cost / row.orders) : "—"}</td><td>{number(row.views)}</td></tr>)}</tbody></table></div>
-        : <><div className="detail-context">{selectedHost ? <>Menampilkan semua campaign untuk <b>{hostLabels.get(selectedHost)}</b><button onClick={() => { setSelectedHost(null); setLiveHost("all"); }}>Lihat semua sesi</button></> : <>Semua detail campaign sesuai filter</>}</div><div className="table-wrap"><table className="live-table detail-table"><thead><tr><th><button onClick={() => setLiveSortKey("launchedAt")}>Tanggal {liveSort === "launchedAt" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th>Campaign</th><th>Sesi</th><th><button onClick={() => setLiveSortKey("cost")}>Cost {liveSort === "cost" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("revenue")}>Gross revenue {liveSort === "revenue" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("roi")}>ROI {liveSort === "roi" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th>Orders</th><th>CPO</th><th>Views</th></tr></thead><tbody>{liveDetailRows.map((row) => <tr key={`${row.campaignId}-${row.launchedAt}-${row.name}`}><td>{new Date(row.launchedAt.replace(" ", "T")).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}<span>{row.launchedAt.slice(11, 16)}</span></td><td><b title={row.name}>{title(row.name, 46)}</b><span>{row.campaign} · {row.campaignId}</span></td><td><em>{row.slot}</em></td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td><strong className={`roi-badge ${roiTone(row.roi)}`}>{roi(row.roi)}</strong></td><td>{number(row.orders)}</td><td>{row.orders?money(row.cost/row.orders):"—"}</td><td>{number(row.views)}</td></tr>)}</tbody></table></div></>}
+        : <><div className="detail-context">{selectedHost ? <>Menampilkan semua campaign untuk <b>{hostLabels.get(selectedHost)}</b><button onClick={() => { setSelectedHost(null); setLiveHost("all"); }}>Lihat semua sesi</button></> : <>Semua detail campaign sesuai filter</>}</div><div className="table-wrap"><table className="live-table detail-table"><thead><tr><th><button onClick={() => setLiveSortKey("launchedAt")}>Tanggal {liveSort === "launchedAt" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("campaign")}>Campaign {liveSort === "campaign" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("slot")}>Sesi {liveSort === "slot" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("cost")}>Cost {liveSort === "cost" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("revenue")}>Gross revenue {liveSort === "revenue" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("roi")}>ROI {liveSort === "roi" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("orders")}>Orders {liveSort === "orders" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("cpo")}>CPO {liveSort === "cpo" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th><th><button onClick={() => setLiveSortKey("views")}>Views {liveSort === "views" ? (liveSortDesc ? "↓" : "↑") : ""}</button></th></tr></thead><tbody>{liveDetailRows.map((row) => <tr key={`${row.campaignId}-${row.launchedAt}-${row.name}`}><td>{new Date(row.launchedAt.replace(" ", "T")).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}<span>{row.launchedAt.slice(11, 16)}</span></td><td><b title={row.name}>{title(row.name, 46)}</b><span>{row.campaign} · {row.campaignId}</span></td><td><em>{row.slot}</em></td><td>{money(row.cost)}</td><td>{money(row.revenue)}</td><td><strong className={`roi-badge ${roiTone(row.roi)}`}>{roi(row.roi)}</strong></td><td>{number(row.orders)}</td><td>{row.orders?money(row.cost/row.orders):"—"}</td><td>{number(row.views)}</td></tr>)}</tbody></table></div></>}
       </section>
       <p className="live-note">ROI dihitung ulang dari Gross Revenue (Current Shop) ÷ Cost. Penggabungan host mengabaikan kata umum seperti “live”, “beauty”, “official”, perbedaan kapital, tanda baca, dan huruf berulang.</p>
     </>}

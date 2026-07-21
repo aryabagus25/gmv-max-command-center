@@ -25,3 +25,22 @@
   width: 100%;
   min-width: 0;
 }
+
+.creative-modal .video-funnel {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+}
+
+.creative-modal .video-funnel i { background: #e8edf5; }
+
+.video-data-empty {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px dashed #cfd7e6;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: center;
+}
