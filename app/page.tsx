@@ -124,6 +124,7 @@ export default function Home() {
         setCreativeSource(prev=>[...prev,...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Creative",rows:dataRows.length,importedAt:new Date().toLocaleString("id-ID")},...prev]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} baris creative ditambahkan ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else if (headers.includes("live name") && headers.includes("launched time")) {
         const mapped = dataRows.map((r) => { const launchedAt=String(take(r,["Launched time"])); const cost=n(take(r,["Cost"])); const revenue=n(take(r,["Gross revenue (Current Shop)","Gross revenue","Revenue"])); return { brand:targetBrand, name:String(take(r,["LIVE name"])), launchedAt, day:launchedAt.slice(0,10), campaign:String(take(r,["Campaign name"])), campaignId:String(take(r,["Campaign ID"])), status:String(take(r,["Status"])), cost, revenue, orders:n(take(r,["SKU orders (Current Shop)","SKU orders","Orders"])), views:n(take(r,["LIVE views","Views"])), tenSecondViews:n(take(r,["10s views"])), follows:n(take(r,["LIVE follows","Follows"])), durationMinutes:n(take(r,["LIVE duration (min)","Duration (min)","Duration minutes","LIVE duration"])), roi:cost?revenue/cost:0, importId } as LiveRow; });
+        const importedDays=mapped.map(row=>row.day).filter(Boolean).sort(); if(importedDays.length){setLiveFrom(importedDays[0]);setLiveTo(importedDays[importedDays.length-1])}
         setLiveSource(prev=>[...prev,...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Livestream",rows:dataRows.length,importedAt:new Date().toLocaleString("id-ID")},...prev]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} sesi livestream ditambahkan ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else throw new Error("Kolom tidak dikenali sebagai export creative atau livestream TikTok");
     } catch (error) { setImportMessage(`Import gagal: ${error instanceof Error ? error.message : "format file tidak dikenali"}`); }
@@ -132,6 +133,7 @@ export default function Home() {
   const brands = brandRecords;
   const brandCreative = useMemo(()=>creativeSource.filter(x=>selectedBrand==="all"||(x.brand||"Brand Februari")===selectedBrand),[creativeSource,selectedBrand]);
   const brandLive = useMemo(()=>liveSource.filter(x=>selectedBrand==="all"||(x.brand||"Brand Februari")===selectedBrand),[liveSource,selectedBrand]);
+  const liveBounds = useMemo(()=>{const days=brandLive.map(row=>row.day).filter(Boolean).sort();return {min:days[0]||LIVE_MIN,max:days[days.length-1]||LIVE_MAX}},[brandLive]);
   const creativeRows = useMemo(() => brandCreative
     .filter((row) => campaign === "all" || row.campaign === campaign)
     .filter((row) => !creativeFrom || (row.postedAt !== "-" && row.postedAt.slice(0,10) >= creativeFrom))
@@ -227,7 +229,7 @@ export default function Home() {
   const overviewOrders = (overviewScope !== "live" ? overviewCreative.orders : 0) + (overviewScope !== "creative" ? overviewLive.orders : 0);
   const setLiveSortKey = (key: LiveSortKey) => { if (liveSort === key) setLiveSortDesc(!liveSortDesc); else { setLiveSort(key); setLiveSortDesc(true); } };
   const setCreativeSortKey = (key: SortKey) => { if(sort===key)setSortDesc(!sortDesc);else{setSort(key);setSortDesc(true)} };
-  const resetLiveFilters = () => { setLiveFrom(LIVE_MIN); setLiveTo(LIVE_MAX); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
+  const resetLiveFilters = () => { setLiveFrom(liveBounds.min); setLiveTo(liveBounds.max); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
   const openHost = (key: string) => { setSelectedHost(key); setLiveHost(key); setLiveView("detail"); setLiveSort("launchedAt"); setLiveSortDesc(true); };
   const activeBrandEmpty = selectedBrand !== "all" && !creativeSource.some(x=>(x.brand||"Brand Februari")===selectedBrand) && !liveSource.some(x=>(x.brand||"Brand Februari")===selectedBrand);
   const saveBrand = () => {
@@ -326,8 +328,8 @@ export default function Home() {
     {!activeBrandEmpty && tab === "live" && <>
       <section className="section-heading"><div><span>LIVESTREAM DATA</span><h2>Live host performance</h2><p>Nama campaign yang mirip otomatis digabung menjadi satu host. Klik host untuk membuka semua sesi campaign-nya.</p></div><div className="snapshot">{number(filteredLiveSessions.length)} SESSIONS <b>{number(liveLeaders.length)} HOSTS</b></div></section>
       <section className="live-filters" aria-label="Filter livestream">
-        <label>Dari tanggal<input type="date" value={liveFrom} min={LIVE_MIN} max={liveTo} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveFrom(e.target.value)} /></label>
-        <label>Sampai<input type="date" value={liveTo} min={liveFrom} max={LIVE_MAX} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveTo(e.target.value)} /></label>
+        <label>Dari tanggal<input type="date" value={liveFrom} min={liveBounds.min} max={liveTo||liveBounds.max} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveFrom(e.target.value)} /></label>
+        <label>Sampai<input type="date" value={liveTo} min={liveFrom||liveBounds.min} max={liveBounds.max} onClick={(e)=>e.currentTarget.showPicker?.()} onChange={(e) => setLiveTo(e.target.value)} /></label>
         <label>Host / akun<select value={liveHost} onChange={(e) => { setLiveHost(e.target.value); setSelectedHost(e.target.value === "all" ? null : e.target.value); }}><option value="all">Semua host</option>{[...hostLabels].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
         <fieldset><legend>Sesi</legend><div className="slot-chips">{["pagi", "siang", "sore", "malam"].map((slot) => <button key={slot} className={liveSlots.includes(slot) ? "on" : ""} onClick={() => setLiveSlots(liveSlots.includes(slot) ? liveSlots.filter((item) => item !== slot) : [...liveSlots, slot])}>{slot}</button>)}</div></fieldset>
         <label className="live-search">Cari campaign<input value={liveQuery} onChange={(e) => setLiveQuery(e.target.value)} placeholder="Nama live / campaign / ID…" /></label>
