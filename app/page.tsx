@@ -31,10 +31,17 @@ const pct = (n: number) => `${(n * 100).toLocaleString("id-ID", { maximumFractio
 const roi = (n: number) => `${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}x`;
 const title = (value: string, max = 58) => value.length > max ? `${value.slice(0, max)}…` : value;
 const monthLabel = (value:string) => value ? new Date(`${value}-01T00:00:00`).toLocaleDateString("id-ID",{month:"short",year:"numeric"}) : "Tanpa periode";
+const monthStart = (period:string) => `${period}-01`;
+const monthEnd = (period:string) => new Date(Number(period.slice(0,4)),Number(period.slice(5,7)),0).toISOString().slice(0,10);
+const importDateRange = (imports:ImportRecord[]) => {
+  const periods = imports.filter((record) => !record.builtin && /^\d{4}-\d{2}$/.test(record.period)).map((record) => record.period).sort();
+  if (!periods.length) return null;
+  return { from: monthStart(periods[0]), to: monthEnd(periods[periods.length - 1]) };
+};
 const periodInRange = (period:string|undefined, from:string, to:string) => {
   period=period||"2026-02";
-  const first=`${period}-01`;
-  const last=new Date(Number(period.slice(0,4)),Number(period.slice(5,7)),0).toISOString().slice(0,10);
+  const first=monthStart(period);
+  const last=monthEnd(period);
   return (!from||last>=from)&&(!to||first<=to);
 };
 const normalizedPostedDate = (value:string|undefined) => {
@@ -234,6 +241,19 @@ export default function Home() {
         if (!active) return;
         setBrandRecords(meta.brands || []);
         setImportHistory(meta.imports || []);
+        if (selectedBrand === "all" && (meta.brands || []).length) {
+          setSelectedBrand(meta.brands[0]);
+          setBrandName(meta.brands[0]);
+        }
+        const d1Range = importDateRange(meta.imports || []);
+        if (d1Range) {
+          setOverviewFrom(d1Range.from);
+          setOverviewTo(d1Range.to);
+          setCreativeFrom(d1Range.from);
+          setCreativeTo(d1Range.to);
+          setLiveFrom(d1Range.from);
+          setLiveTo(d1Range.to);
+        }
         if (!(meta.imports || []).length) return;
         setImportMessage("Memuat data import dari D1…");
         const [creative, live] = await Promise.all([loadKind<CreativeRow>("Creative"), loadKind<LiveRow>("Livestream")]);
