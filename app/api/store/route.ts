@@ -40,7 +40,7 @@ export async function GET(request: Request) {
   if (url.searchParams.get("mode") === "chunks") {
     const kind = url.searchParams.get("kind") === "Livestream" ? "Livestream" : "Creative";
     const offset = Math.max(0, Number(url.searchParams.get("offset") || 0) || 0);
-    const limit = Math.min(25, Math.max(1, Number(url.searchParams.get("limit") || 8) || 8));
+    const limit = Math.min(1, Math.max(1, Number(url.searchParams.get("limit") || 1) || 1));
     const chunks = await db.prepare("SELECT import_id, kind, chunk_index, payload_json FROM import_chunks WHERE kind = ? ORDER BY import_id ASC, chunk_index ASC LIMIT ? OFFSET ?").bind(kind, limit, offset).all<ChunkRow>();
     const totalResult = await db.prepare("SELECT COUNT(*) AS total FROM import_chunks WHERE kind = ?").bind(kind).first<{ total:number }>();
     const rows: unknown[] = [];

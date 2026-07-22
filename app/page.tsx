@@ -20,6 +20,7 @@ type ImportRecord = { id:string; brand:string; file:string; kind:ImportKind; per
 type StoredDashboard = { brands:string[]; imports:ImportRecord[]; creative:CreativeRow[]; live:LiveRow[] };
 type StoredMeta = { brands:string[]; imports:ImportRecord[] };
 type StoredChunk<T> = { rows:T[]; nextOffset:number; totalChunks:number };
+const sleep = (ms:number) => new Promise((resolve) => setTimeout(resolve, ms));
 const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
 
@@ -225,12 +226,16 @@ export default function Home() {
       let offset = 0;
       let total = 0;
       do {
-        const response = await fetch(`/api/store?mode=chunks&kind=${encodeURIComponent(kind)}&offset=${offset}&limit=8`);
-        if (!response.ok) throw new Error(await response.text());
+        const response = await fetch(`/api/store?mode=chunks&kind=${encodeURIComponent(kind)}&offset=${offset}&limit=1`);
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text.includes("Worker exceeded resource limits") || text.includes("cf-error-code") ? "Cloudflare Worker terlalu berat saat membaca chunk lama. Hapus import lama lalu upload ulang dengan versi terbaru." : text.slice(0, 240));
+        }
         const chunk = await response.json() as StoredChunk<T>;
         rows.push(...(chunk.rows || []));
         offset = chunk.nextOffset;
         total = chunk.totalChunks;
+        if (offset < total) await sleep(25);
       } while (active && offset < total);
       return rows;
     };
@@ -259,9 +264,10 @@ export default function Home() {
         }
         if (!(meta.imports || []).length) return;
         setImportMessage("Memuat data import dari D1…");
-        const [creative, live] = await Promise.all([loadKind<CreativeRow>("Creative"), loadKind<LiveRow>("Livestream")]);
+        const creative = await loadKind<CreativeRow>("Creative");
+        if (active) setCreativeSource(creative);
+        const live = await loadKind<LiveRow>("Livestream");
         if (!active) return;
-        setCreativeSource(creative);
         setLiveSource(live);
         setImportMessage(`Data import dari D1 sudah aktif (${number(creative.length)} creative · ${number(live.length)} live).`);
       } catch (error) {
