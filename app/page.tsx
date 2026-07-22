@@ -18,6 +18,8 @@ type LiveRow = {
 type CreativeCampaign = { name: string; cost: number; revenue: number; orders: number; clicks: number; impressions: number; creatives: number; roi: number };
 type ImportRecord = { id:string; brand:string; file:string; kind:ImportKind; period:string; rows:number; importedAt:string; builtin?:boolean };
 type StoredDashboard = { brands:string[]; imports:ImportRecord[]; creative:CreativeRow[]; live:LiveRow[] };
+type StoredMeta = { brands:string[]; imports:ImportRecord[] };
+type StoredChunk<T> = { rows:T[]; nextOffset:number; totalChunks:number };
 const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
 
@@ -210,17 +212,39 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/store")
-      .then((response) => response.ok ? response.json() : null)
-      .then((stored: StoredDashboard | null) => {
-        if (!active || !stored) return;
-        setBrandRecords(stored.brands || []);
-        setImportHistory(stored.imports || []);
-        setCreativeSource(stored.creative || []);
-        setLiveSource(stored.live || []);
-        if ((stored.imports || []).length) setImportMessage("Data import dari D1 sudah aktif.");
-      })
-      .catch(() => undefined);
+    const loadKind = async <T,>(kind: ImportKind) => {
+      const rows:T[] = [];
+      let offset = 0;
+      let total = 0;
+      do {
+        const response = await fetch(`/api/store?mode=chunks&kind=${encodeURIComponent(kind)}&offset=${offset}&limit=8`);
+        if (!response.ok) throw new Error(await response.text());
+        const chunk = await response.json() as StoredChunk<T>;
+        rows.push(...(chunk.rows || []));
+        offset = chunk.nextOffset;
+        total = chunk.totalChunks;
+      } while (active && offset < total);
+      return rows;
+    };
+    (async () => {
+      try {
+        const metaResponse = await fetch("/api/store?mode=meta");
+        if (!metaResponse.ok) throw new Error(await metaResponse.text());
+        const meta = await metaResponse.json() as StoredMeta;
+        if (!active) return;
+        setBrandRecords(meta.brands || []);
+        setImportHistory(meta.imports || []);
+        if (!(meta.imports || []).length) return;
+        setImportMessage("Memuat data import dari D1…");
+        const [creative, live] = await Promise.all([loadKind<CreativeRow>("Creative"), loadKind<LiveRow>("Livestream")]);
+        if (!active) return;
+        setCreativeSource(creative);
+        setLiveSource(live);
+        setImportMessage(`Data import dari D1 sudah aktif (${number(creative.length)} creative · ${number(live.length)} live).`);
+      } catch (error) {
+        if (active) setImportMessage(`Load D1 gagal: ${error instanceof Error ? error.message : "data belum bisa dimuat"}`);
+      }
+    })();
     return () => { active = false; };
   }, []);
 

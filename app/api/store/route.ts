@@ -22,12 +22,26 @@ async function ensureTables(db: D1Database) {
 const json = (payload: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(payload), { ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
   const db = database();
   if (!db) return json({ brands: [], imports: [], creative: [], live: [] });
   await ensureTables(db);
   const brandsResult = await db.prepare("SELECT name FROM brands ORDER BY created_at ASC").all<{ name:string }>();
   const importsResult = await db.prepare("SELECT id, brand, file, kind, period, rows, imported_at AS importedAt FROM imports ORDER BY created_at DESC").all<ImportRecord>();
+  if (url.searchParams.get("mode") === "meta") {
+    return json({ brands: (brandsResult.results || []).map((row) => row.name), imports: importsResult.results || [] });
+  }
+  if (url.searchParams.get("mode") === "chunks") {
+    const kind = url.searchParams.get("kind") === "Livestream" ? "Livestream" : "Creative";
+    const offset = Math.max(0, Number(url.searchParams.get("offset") || 0) || 0);
+    const limit = Math.min(25, Math.max(1, Number(url.searchParams.get("limit") || 8) || 8));
+    const chunks = await db.prepare("SELECT import_id, kind, chunk_index, payload_json FROM import_chunks WHERE kind = ? ORDER BY import_id ASC, chunk_index ASC LIMIT ? OFFSET ?").bind(kind, limit, offset).all<ChunkRow>();
+    const totalResult = await db.prepare("SELECT COUNT(*) AS total FROM import_chunks WHERE kind = ?").bind(kind).first<{ total:number }>();
+    const rows: unknown[] = [];
+    for (const chunk of chunks.results || []) rows.push(...JSON.parse(chunk.payload_json || "[]") as unknown[]);
+    return json({ rows, nextOffset: offset + (chunks.results || []).length, totalChunks: totalResult?.total || 0 });
+  }
   const chunksResult = await db.prepare("SELECT import_id, kind, chunk_index, payload_json FROM import_chunks ORDER BY import_id ASC, chunk_index ASC").all<ChunkRow>();
   const creative: unknown[] = [];
   const live: unknown[] = [];
