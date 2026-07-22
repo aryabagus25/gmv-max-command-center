@@ -215,6 +215,7 @@ export default function Home() {
   const [editingBrand, setEditingBrand] = useState<string|null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
+  const [storeLoading, setStoreLoading] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -241,9 +242,11 @@ export default function Home() {
         if (!active) return;
         setBrandRecords(meta.brands || []);
         setImportHistory(meta.imports || []);
-        if (selectedBrand === "all" && (meta.brands || []).length) {
-          setSelectedBrand(meta.brands[0]);
-          setBrandName(meta.brands[0]);
+        const importedBrand = (meta.imports || []).find((record) => !record.builtin)?.brand;
+        const preferredBrand = importedBrand || (meta.brands || [])[0];
+        if (preferredBrand && (selectedBrand === "all" || !(meta.imports || []).some((record) => record.brand === selectedBrand))) {
+          setSelectedBrand(preferredBrand);
+          setBrandName(preferredBrand);
         }
         const d1Range = importDateRange(meta.imports || []);
         if (d1Range) {
@@ -263,6 +266,8 @@ export default function Home() {
         setImportMessage(`Data import dari D1 sudah aktif (${number(creative.length)} creative · ${number(live.length)} live).`);
       } catch (error) {
         if (active) setImportMessage(`Load D1 gagal: ${error instanceof Error ? error.message : "data belum bisa dimuat"}`);
+      } finally {
+        if (active) setStoreLoading(false);
       }
     })();
     return () => { active = false; };
@@ -274,7 +279,7 @@ export default function Home() {
       if (!response.ok) throw new Error(await response.text());
     };
     await send({ action: "start", record });
-    const chunkSize = 450;
+    const chunkSize = 75;
     for (let index = 0; index < rows.length; index += chunkSize) {
       await send({ action: "chunk", importId: record.id, kind: record.kind, chunkIndex: Math.floor(index / chunkSize), rows: rows.slice(index, index + chunkSize) });
     }
@@ -428,7 +433,7 @@ export default function Home() {
   const setCreativeSortKey = (key: SortKey) => { if(sort===key)setSortDesc(!sortDesc);else{setSort(key);setSortDesc(true)} };
   const resetLiveFilters = () => { setLiveFrom(liveBounds.min); setLiveTo(liveBounds.max); setLiveHost("all"); setLiveSlots([]); setLiveQuery(""); setSelectedHost(null); setLiveView("leader"); };
   const openHost = (key: string) => { setSelectedHost(key); setLiveHost(key); setLiveView("detail"); setLiveSort("launchedAt"); setLiveSortDesc(true); };
-  const activeBrandEmpty = selectedBrand !== "all" && !creativeSource.some(x=>(x.brand||"Brand Februari")===selectedBrand) && !liveSource.some(x=>(x.brand||"Brand Februari")===selectedBrand);
+  const activeBrandEmpty = !storeLoading && selectedBrand !== "all" && !creativeSource.some(x=>(x.brand||"Brand Februari")===selectedBrand) && !liveSource.some(x=>(x.brand||"Brand Februari")===selectedBrand);
   const saveBrand = () => {
     const next=brandName.trim(); if(!next) return;
     if(editingBrand){setBrandRecords(prev=>prev.map(x=>x===editingBrand?next:x));setCreativeSource(prev=>prev.map(x=>(x.brand||"Brand Februari")===editingBrand?{...x,brand:next}:x));setLiveSource(prev=>prev.map(x=>(x.brand||"Brand Februari")===editingBrand?{...x,brand:next}:x));setImportHistory(prev=>prev.map(x=>x.brand===editingBrand?{...x,brand:next}:x));setSelectedBrand(next)}
@@ -456,10 +461,11 @@ export default function Home() {
       {(["overview", "creative", "live"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "active" : ""}>{item === "overview" ? "Overview" : item === "creative" ? "Creative Video" : "Livestream"}<span>{item === "creative" ? number(brandCreative.length) : item === "live" ? number(brandLive.length) : ""}</span></button>)}
     </nav>
 
-    {!activeBrandEmpty && <DataHealth />}
-    {activeBrandEmpty && <section className="empty-brand"><div>□</div><h2>Belum ada data untuk {selectedBrand}</h2><p>Brand sudah dibuat. Import file creative atau livestream untuk mulai mengisi dashboard.</p><button onClick={()=>setImportOpen(true)}>Import data sekarang</button></section>}
+    {!storeLoading && !activeBrandEmpty && <DataHealth />}
+    {storeLoading && <section className="empty-brand"><div>□</div><h2>Memuat data dari D1…</h2><p>{importMessage}</p></section>}
+    {activeBrandEmpty && <section className="empty-brand"><div>□</div><h2>Belum ada data untuk {selectedBrand}</h2><p>Brand sudah dibuat. Import file creative atau livestream untuk mulai mengisi dashboard. {importMessage}</p><button onClick={()=>setImportOpen(true)}>Import data sekarang</button></section>}
 
-    {!activeBrandEmpty && tab === "overview" && <>
+    {!storeLoading && !activeBrandEmpty && tab === "overview" && <>
       <section className="overview-filter"><div><b>Filter overview</b><span>Brand aktif: {selectedBrand==="all"?"Semua brand":selectedBrand}</span></div><DateRangeFilter from={overviewFrom} to={overviewTo} onChange={(from,to)=>{setOverviewFrom(from);setOverviewTo(to)}}/><label>Data<select value={overviewScope} onChange={(e)=>setOverviewScope(e.target.value as typeof overviewScope)}><option value="all">Creative + Live</option><option value="creative">Creative saja</option><option value="live">Live saja</option></select></label><label>Campaign<select value={overviewCampaign} onChange={(e)=>setOverviewCampaign(e.target.value)}><option value="all">Semua campaign</option>{creativeCampaigns.map(x=><option key={x.name}>{x.name}</option>)}</select></label><button onClick={()=>{setOverviewScope("all");setOverviewCampaign("all");setOverviewFrom("2026-01-01");setOverviewTo("2026-12-31")}}>Reset</button></section>
       <section className="hero-grid">
         <article className="score-card">
@@ -486,7 +492,7 @@ export default function Home() {
       </section>
     </>}
 
-    {!activeBrandEmpty && tab === "creative" && <>
+    {!storeLoading && !activeBrandEmpty && tab === "creative" && <>
       <section className="section-heading"><div><span>CREATIVE VIDEO / PER CAMPAIGN</span><h2>Creative performance</h2><p>Satu baris = kombinasi campaign + product + video. Product card tetap dipisahkan dari video.</p></div><div className="snapshot">SNAPSHOT EXPORT <b>FEB 2026</b></div></section>
       <section className="controls">
         <DateRangeFilter label="Periode laporan" from={creativeFrom||"2026-01-01"} to={creativeTo||"2026-12-31"} onChange={(from,to)=>{setCreativeFrom(from);setCreativeTo(to)}}/>
@@ -521,7 +527,7 @@ export default function Home() {
       </section>
     </>}
 
-    {!activeBrandEmpty && tab === "live" && <>
+    {!storeLoading && !activeBrandEmpty && tab === "live" && <>
       <section className="section-heading"><div><span>LIVESTREAM DATA</span><h2>Live host performance</h2><p>Nama campaign yang mirip otomatis digabung menjadi satu host. Klik host untuk membuka semua sesi campaign-nya.</p></div><div className="snapshot">{number(filteredLiveSessions.length)} SESSIONS <b>{number(liveLeaders.length)} HOSTS</b></div></section>
       <section className="live-filters" aria-label="Filter livestream">
         <DateRangeFilter label="Periode live" from={liveFrom} to={liveTo} min={liveBounds.min} max={liveBounds.max} onChange={(from,to)=>{setLiveFrom(from);setLiveTo(to)}}/>

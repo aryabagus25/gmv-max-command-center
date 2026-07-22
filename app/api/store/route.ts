@@ -29,6 +29,11 @@ export async function GET(request: Request) {
   await ensureTables(db);
   const brandsResult = await db.prepare("SELECT name FROM brands ORDER BY created_at ASC").all<{ name:string }>();
   const importsResult = await db.prepare("SELECT id, brand, file, kind, period, rows, imported_at AS importedAt FROM imports ORDER BY created_at DESC").all<ImportRecord>();
+  if (url.searchParams.get("mode") === "debug") {
+    const chunkSummary = await db.prepare("SELECT kind, COUNT(*) AS chunks, SUM(LENGTH(payload_json)) AS bytes FROM import_chunks GROUP BY kind").all<{ kind:string; chunks:number; bytes:number }>();
+    const importSummary = await db.prepare("SELECT i.id, i.brand, i.kind, i.period, i.rows, COUNT(c.chunk_index) AS chunks, COALESCE(SUM(LENGTH(c.payload_json)), 0) AS bytes FROM imports i LEFT JOIN import_chunks c ON c.import_id = i.id GROUP BY i.id ORDER BY i.created_at DESC").all();
+    return json({ brands: (brandsResult.results || []).map((row) => row.name), imports: importsResult.results || [], chunkSummary: chunkSummary.results || [], importSummary: importSummary.results || [] });
+  }
   if (url.searchParams.get("mode") === "meta") {
     return json({ brands: (brandsResult.results || []).map((row) => row.name), imports: importsResult.results || [] });
   }
