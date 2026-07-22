@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dashboardData from "./dashboard-data.json";
 import "./live-layout-fixes.css";
 
@@ -17,6 +17,7 @@ type LiveRow = {
 };
 type CreativeCampaign = { name: string; cost: number; revenue: number; orders: number; clicks: number; impressions: number; creatives: number; roi: number };
 type ImportRecord = { id:string; brand:string; file:string; kind:ImportKind; period:string; rows:number; importedAt:string; builtin?:boolean };
+type StoredDashboard = { brands:string[]; imports:ImportRecord[]; creative:CreativeRow[]; live:LiveRow[] };
 const n = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const pick = (row: Record<string, unknown>, names: string[]) => { const key = Object.keys(row).find((k) => names.some((name) => k.toLowerCase().trim() === name.toLowerCase())); return key ? row[key] : ""; };
 
@@ -207,6 +208,35 @@ export default function Home() {
   const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    let active = true;
+    fetch("/api/store")
+      .then((response) => response.ok ? response.json() : null)
+      .then((stored: StoredDashboard | null) => {
+        if (!active || !stored) return;
+        setBrandRecords(stored.brands || []);
+        setImportHistory(stored.imports || []);
+        setCreativeSource(stored.creative || []);
+        setLiveSource(stored.live || []);
+        if ((stored.imports || []).length) setImportMessage("Data import dari D1 sudah aktif.");
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  const persistImport = async (record: ImportRecord, rows: CreativeRow[] | LiveRow[]) => {
+    const send = async (payload: Record<string, unknown>) => {
+      const response = await fetch("/api/store", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) throw new Error(await response.text());
+    };
+    await send({ action: "start", record });
+    const chunkSize = 450;
+    for (let index = 0; index < rows.length; index += chunkSize) {
+      await send({ action: "chunk", importId: record.id, kind: record.kind, chunkIndex: Math.floor(index / chunkSize), rows: rows.slice(index, index + chunkSize) });
+    }
+    await send({ action: "finish", importId: record.id, rows: rows.length });
+  };
+
   const importExcel = async (file: File) => {
     try {
       setImportMessage(`Membaca ${file.name}…`);
@@ -228,19 +258,26 @@ export default function Home() {
       if (!targetBrand) throw new Error("Pilih brand terlebih dahulu");
       if (!importPeriod) throw new Error("Pilih periode bulan terlebih dahulu");
       const importId = `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      const importedAt = new Date().toLocaleString("id-ID");
       if (has("Video ID","Post ID","ID Video") && has("Campaign name","Nama kampanye","Creative","Video title","Judul video")) {
         setImportKind("Creative");
         const mapped = dataRows.map((r) => { const cost = n(take(r,["Cost","Biaya"])); const revenue = n(take(r,["Gross revenue","Revenue","Pendapatan kotor","Penghasilan bruto (Toko saat ini)"])); return {
           brand:targetBrand, period:importPeriod, campaign:String(take(r,["Campaign name","Nama kampanye"])||file.name.match(/Campaign\s+([^.]*)/i)?.[1]||"Creative import"), campaignId:String(take(r,["Campaign ID","ID Campaign"])), productId:String(take(r,["Product ID","ID Produk"])), type:String(take(r,["Creative type","Type","Jenis materi iklan"])||"Video"), title:String(take(r,["Video title","Judul video","Video caption","Creative","Creative name","Title"])), videoId:String(take(r,["Video ID","Post ID","ID Video"])), account:String(take(r,["TikTok account","Account","Creator username","Akun TikTok"])), postedAt:String(take(r,["Time posted","Video post time","Posted time","Waktu posting"])), status:String(take(r,["Status"])), authorization:String(take(r,["Authorization type","Authorization status","Authorization","Jenis otorisasi","Status otorisasi"])), cost, revenue, orders:n(take(r,["SKU orders","Orders","Pesanan SKU","Pesanan SKU (Toko saat ini)"])), impressions:n(take(r,["Product ad impressions","Impressions","Tayangan iklan produk"])), clicks:n(take(r,["Product ad clicks","Clicks","Klik iklan produk"])), ctr:n(take(r,["Product ad click rate","CTR","Rasio klik iklan produk"])), cvr:n(take(r,["Ad conversion rate","CVR","Rasio konversi iklan"])), view2:n(take(r,["2-second ad video view rate","2-second video view rate"])), view6:n(take(r,["6-second ad video view rate","6-second video view rate"])), view25:n(take(r,["25% ad video view rate","Video views at 25%"])), view50:n(take(r,["50% ad video view rate","Video views at 50%"])), view75:n(take(r,["75% ad video view rate","Video views at 75%"])), view100:n(take(r,["100% ad video view rate","Video views at 100%"])), roi:cost?revenue/cost:0, importId
         } as CreativeRow; });
+        const record={id:importId,brand:targetBrand,file:file.name,kind:"Creative" as ImportKind,period:importPeriod,rows:dataRows.length,importedAt};
+        setImportMessage(`Menyimpan ${dataRows.length.toLocaleString("id-ID")} baris creative ke D1…`);
+        await persistImport(record,mapped);
         const replaced=importHistory.filter(x=>x.brand===targetBrand&&x.kind==="Creative"&&(x.period===importPeriod||x.builtin));
-        setCreativeSource(prev=>[...prev.filter(x=>{const owner=x.brand||"Brand Februari";return !replaced.some(record=>record.id===x.importId)&&!(owner===targetBrand&&!x.importId)}),...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Creative",period:importPeriod,rows:dataRows.length,importedAt:new Date().toLocaleString("id-ID")},...prev.filter(x=>!(x.brand===targetBrand&&x.kind==="Creative"&&(x.period===importPeriod||x.builtin)))]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} baris creative ${monthLabel(importPeriod)} ${replaced.length?"menggantikan data lama":"ditambahkan"} ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
+        setCreativeSource(prev=>[...prev.filter(x=>{const owner=x.brand||"Brand Februari";return !replaced.some(record=>record.id===x.importId)&&!(owner===targetBrand&&!x.importId)}),...mapped]); setImportHistory(prev=>[record,...prev.filter(x=>!(x.brand===targetBrand&&x.kind==="Creative"&&(x.period===importPeriod||x.builtin)))]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} baris creative ${monthLabel(importPeriod)} ${replaced.length?"menggantikan data lama":"ditambahkan"} ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else if (has("LIVE name","Livestream name","Nama LIVE") && has("Launched time","Launch time","LIVE start time","Waktu peluncuran")) {
         setImportKind("Livestream");
         const mapped = dataRows.map((r) => { const launchedAt=String(take(r,["Launched time","Launch time","LIVE start time","Waktu peluncuran"])); const cost=n(take(r,["Cost","Spend","Biaya"])); const revenue=n(take(r,["Gross revenue (Current Shop)","Gross revenue","Revenue","GMV","Penghasilan bruto (Toko saat ini)","Pendapatan kotor"])); return { brand:targetBrand, period:importPeriod, name:String(take(r,["LIVE name","Livestream name","Nama LIVE"])), launchedAt, day:launchedAt.slice(0,10), campaign:String(take(r,["Campaign name","LIVE campaign name","Nama kampanye"])), campaignId:String(take(r,["Campaign ID","LIVE campaign ID","ID Campaign"])), status:String(take(r,["Status","Delivery status","Status penayangan"])), cost, revenue, orders:n(take(r,["SKU orders (Current Shop)","SKU orders","Orders","Pesanan SKU (Toko saat ini)","Pesanan SKU"])), views:n(take(r,["LIVE views","Views","Livestream views","Tayangan LIVE"])), tenSecondViews:n(take(r,["10s views","10-second views","Tayangan LIVE 10 detik"])), follows:n(take(r,["LIVE follows","Follows","Pengikut saat LIVE"])), durationMinutes:n(take(r,["LIVE duration (min)","Duration (min)","Duration minutes","LIVE duration","Durasi LIVE (mnt)"])), roi:cost?revenue/cost:0, importId } as LiveRow; });
         const importedDays=mapped.map(row=>row.day).filter(Boolean).sort(); if(importedDays.length){setLiveFrom(importedDays[0]);setLiveTo(importedDays[importedDays.length-1])}
+        const record={id:importId,brand:targetBrand,file:file.name,kind:"Livestream" as ImportKind,period:importPeriod,rows:dataRows.length,importedAt};
+        setImportMessage(`Menyimpan ${dataRows.length.toLocaleString("id-ID")} sesi livestream ke D1…`);
+        await persistImport(record,mapped);
         const replaced=importHistory.filter(x=>x.brand===targetBrand&&x.kind==="Livestream"&&(x.period===importPeriod||x.builtin));
-        setLiveSource(prev=>[...prev.filter(x=>{const owner=x.brand||"Brand Februari";return !replaced.some(record=>record.id===x.importId)&&!(owner===targetBrand&&!x.importId)}),...mapped]); setImportHistory(prev=>[{id:importId,brand:targetBrand,file:file.name,kind:"Livestream",period:importPeriod,rows:dataRows.length,importedAt:new Date().toLocaleString("id-ID")},...prev.filter(x=>!(x.brand===targetBrand&&x.kind==="Livestream"&&(x.period===importPeriod||x.builtin)))]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} sesi livestream ${monthLabel(importPeriod)} ${replaced.length?"menggantikan data lama":"ditambahkan"} ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
+        setLiveSource(prev=>[...prev.filter(x=>{const owner=x.brand||"Brand Februari";return !replaced.some(record=>record.id===x.importId)&&!(owner===targetBrand&&!x.importId)}),...mapped]); setImportHistory(prev=>[record,...prev.filter(x=>!(x.brand===targetBrand&&x.kind==="Livestream"&&(x.period===importPeriod||x.builtin)))]); setImportMessage(`${dataRows.length.toLocaleString("id-ID")} sesi livestream ${monthLabel(importPeriod)} ${replaced.length?"menggantikan data lama":"ditambahkan"} ke ${targetBrand}.`); setImportOpen(false); setTab("overview");
       } else throw new Error(`Kolom belum dikenali. Ditemukan: ${headerRow.filter(Boolean).slice(0,8).join(", ")}`);
     } catch (error) { setImportMessage(`Import gagal: ${error instanceof Error ? error.message : "format file tidak dikenali"}`); }
   };
@@ -359,7 +396,7 @@ export default function Home() {
     if(record.builtin){
       if(record.kind==="Creative") setCreativeSource(prev=>prev.filter(x=>Boolean(x.brand)));
       else setLiveSource(prev=>prev.filter(x=>Boolean(x.brand)));
-    } else {setCreativeSource(prev=>prev.filter(x=>x.importId!==record.id));setLiveSource(prev=>prev.filter(x=>x.importId!==record.id))}
+    } else {fetch(`/api/store?id=${encodeURIComponent(record.id)}`,{method:"DELETE"}).catch(()=>undefined);setCreativeSource(prev=>prev.filter(x=>x.importId!==record.id));setLiveSource(prev=>prev.filter(x=>x.importId!==record.id))}
     setImportHistory(prev=>prev.filter(x=>x.id!==record.id));
   };
 
