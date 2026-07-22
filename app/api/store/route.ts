@@ -4,7 +4,11 @@ type ImportKind = "Creative" | "Livestream";
 type ImportRecord = { id:string; brand:string; file:string; kind:ImportKind; period:string; rows:number; importedAt:string; builtin?:boolean };
 type ChunkRow = { import_id:string; kind:ImportKind; chunk_index:number; payload_json:string };
 
-const database = () => (env as { DB?: D1Database }).DB;
+declare global {
+  var __GMV_MAX_ENV__: { DB?: D1Database } | undefined;
+}
+
+const database = () => (env as { DB?: D1Database }).DB || globalThis.__GMV_MAX_ENV__?.DB;
 
 async function ensureTables(db: D1Database) {
   await db.batch([

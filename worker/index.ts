@@ -19,6 +19,10 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+declare global {
+  var __GMV_MAX_ENV__: Env | undefined;
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -27,6 +31,7 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    globalThis.__GMV_MAX_ENV__ = env;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
